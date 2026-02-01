@@ -139,7 +139,3 @@ uv run pytest --tb=locals
 3. Use fixtures from `conftest.py`
 4. For financial calculations, add `@pytest.mark.critical`
 5. Mock external dependencies for unit tests
-
----
-
-*Last updated: June 2025*
