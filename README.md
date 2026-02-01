@@ -4,6 +4,7 @@
 
 A comprehensive, multi-agent AI system built with CrewAI and Mistral AI that provides institutional-quality stock research through Web UI, Telegram bot, and CLI.
 
+![Tests](https://github.com/vishwaskv362/StockResearchAIAgent/actions/workflows/tests.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![CrewAI](https://img.shields.io/badge/CrewAI-0.86+-green.svg)
 ![Mistral AI](https://img.shields.io/badge/Mistral%20AI-Powered-orange.svg)
