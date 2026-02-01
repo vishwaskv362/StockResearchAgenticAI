@@ -1,0 +1,6 @@
+# Stock Research Assistant - Data Directory
+# This directory stores cached data and generated reports
+
+# Subdirectories:
+# - cache/   : Cached API responses
+# - reports/ : Generated research reports
