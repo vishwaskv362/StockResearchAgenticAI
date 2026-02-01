@@ -13,11 +13,12 @@ from crewai.tools import tool
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Common headers for web scraping
+# Note: Removed 'br' (brotli) from Accept-Encoding as httpx may not have brotli support
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
 }
@@ -140,41 +141,48 @@ def scrape_moneycontrol_news(symbol: str, limit: int = 10) -> str:
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'lxml')
                 
-                # Find news articles
-                articles = soup.find_all('li', class_='clearfix') or soup.find_all('div', class_='news_list')
+                # Find news articles in li.clearfix elements
+                articles = soup.find_all('li', class_='clearfix')
                 
-                for article in articles[:limit]:
+                for article in articles:
+                    if len(news_articles) >= limit:
+                        break
                     try:
-                        # Extract title and link
-                        title_elem = article.find('a') or article.find('h2')
-                        if not title_elem:
-                            continue
+                        # Find links that contain /news/ in href (actual news links)
+                        news_links = article.find_all('a', href=re.compile(r'/news/.*\.html'))
                         
-                        title = _clean_text(title_elem.get_text())
-                        link = title_elem.get('href', '')
-                        
-                        if not title or len(title) < 10:
-                            continue
-                        
-                        # Make sure link is absolute
-                        if link and not link.startswith('http'):
-                            link = f"https://www.moneycontrol.com{link}"
-                        
-                        # Extract date/time
-                        time_elem = article.find('span', class_='date') or article.find('p', class_='date')
-                        published = _parse_relative_time(time_elem.get_text() if time_elem else "")
-                        
-                        # Extract summary if available
-                        summary_elem = article.find('p') or article.find('div', class_='content')
-                        summary = _clean_text(summary_elem.get_text()[:200] if summary_elem else "")
-                        
-                        news_articles.append({
-                            "title": title,
-                            "summary": summary,
-                            "url": link,
-                            "published": published,
-                            "source": "Moneycontrol",
-                        })
+                        for link_elem in news_links:
+                            href = link_elem.get('href', '')
+                            title = _clean_text(link_elem.get_text())
+                            
+                            # Skip short titles or non-news links
+                            if not title or len(title) < 20:
+                                continue
+                            
+                            # Make sure link is absolute
+                            if href and not href.startswith('http'):
+                                href = f"https://www.moneycontrol.com{href}"
+                            
+                            # Extract date/time
+                            time_elem = article.find('span', class_='date') or article.find('span', class_='ago')
+                            published = ""
+                            if time_elem:
+                                published = _parse_relative_time(time_elem.get_text())
+                            
+                            # Extract summary from paragraph
+                            summary = ""
+                            p_elem = article.find('p')
+                            if p_elem:
+                                summary = _clean_text(p_elem.get_text()[:200])
+                            
+                            news_articles.append({
+                                "title": title,
+                                "summary": summary,
+                                "url": href,
+                                "published": published,
+                                "source": "Moneycontrol",
+                            })
+                            break  # Only take first valid news link per li
                     
                     except Exception:
                         continue
@@ -264,42 +272,46 @@ def scrape_economic_times_news(symbol: str, limit: int = 10) -> str:
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'lxml')
                 
-                # Find news articles - ET uses various class names
-                articles = soup.find_all('div', class_=re.compile(r'eachStory|story|clr'))
+                # Find all articleshow links (ET's article URL pattern)
+                seen_titles = set()
+                article_links = soup.find_all('a', href=re.compile(r'articleshow'))
                 
-                for article in articles[:limit * 2]:  # Fetch more, filter later
+                for link_elem in article_links:
+                    if len(news_articles) >= limit:
+                        break
                     try:
-                        # Find title link
-                        title_link = article.find('a')
-                        if not title_link:
+                        title = _clean_text(link_elem.get_text())
+                        
+                        # Skip short titles, duplicates, or non-article links
+                        if not title or len(title) < 25 or title in seen_titles:
                             continue
                         
-                        title = _clean_text(title_link.get_text())
-                        if not title or len(title) < 15:
+                        # Skip common non-news items
+                        skip_keywords = ['horoscope', 'weather', 'cricket', 'ipl', 'match']
+                        if any(kw in title.lower() for kw in skip_keywords):
                             continue
                         
-                        link = title_link.get('href', '')
+                        seen_titles.add(title)
+                        
+                        link = link_elem.get('href', '')
                         if link and not link.startswith('http'):
                             link = f"https://economictimes.indiatimes.com{link}"
                         
-                        # Extract date
-                        date_elem = article.find('time') or article.find('span', class_='date-format')
-                        published = _parse_relative_time(date_elem.get_text() if date_elem else "")
-                        
-                        # Extract summary
-                        summary_elem = article.find('p')
-                        summary = _clean_text(summary_elem.get_text()[:200] if summary_elem else "")
+                        # Try to get date from parent element
+                        parent = link_elem.find_parent(['div', 'li', 'article'])
+                        published = ""
+                        if parent:
+                            date_elem = parent.find('time') or parent.find('span', class_=re.compile(r'date|time'))
+                            if date_elem:
+                                published = _parse_relative_time(date_elem.get_text())
                         
                         news_articles.append({
                             "title": title,
-                            "summary": summary,
+                            "summary": "",
                             "url": link,
                             "published": published,
                             "source": "Economic Times",
                         })
-                        
-                        if len(news_articles) >= limit:
-                            break
                     
                     except Exception:
                         continue
@@ -412,7 +424,7 @@ def get_stock_news(symbol: str, limit_per_source: int = 5) -> str:
     
     # Fetch from Moneycontrol
     try:
-        mc_result = json.loads(scrape_moneycontrol_news(symbol, limit_per_source))
+        mc_result = json.loads(scrape_moneycontrol_news.run(symbol, limit_per_source))
         if "articles" in mc_result:
             all_articles.extend(mc_result["articles"])
             sources_status["moneycontrol"] = "success"
@@ -423,7 +435,7 @@ def get_stock_news(symbol: str, limit_per_source: int = 5) -> str:
     
     # Fetch from Economic Times
     try:
-        et_result = json.loads(scrape_economic_times_news(symbol, limit_per_source))
+        et_result = json.loads(scrape_economic_times_news.run(symbol, limit_per_source))
         if "articles" in et_result:
             all_articles.extend(et_result["articles"])
             sources_status["economic_times"] = "success"
@@ -434,7 +446,7 @@ def get_stock_news(symbol: str, limit_per_source: int = 5) -> str:
     
     # Fetch from Business Standard
     try:
-        bs_result = json.loads(scrape_business_standard_news(symbol, limit_per_source))
+        bs_result = json.loads(scrape_business_standard_news.run(symbol, limit_per_source))
         if "articles" in bs_result:
             all_articles.extend(bs_result["articles"])
             sources_status["business_standard"] = "success"
