@@ -7,8 +7,9 @@ from crewai import Agent, LLM
 
 from config import settings
 from tools.news_scraper import (
-    scrape_moneycontrol_news,
+    scrape_et_rss_news,
     scrape_economic_times_news,
+    scrape_google_news,
     get_stock_news,
     get_market_news_headlines,
 )
@@ -16,13 +17,13 @@ from tools.news_scraper import (
 
 def create_news_analyst_agent() -> Agent:
     """Create the News Analyst Agent."""
-    
+
     llm = LLM(
         model=settings.llm_model,
         api_key=settings.mistral_api_key,
         temperature=0.5,
     )
-    
+
     return Agent(
         role="News & Sentiment Analyst",
         goal="""Gather the latest news about Indian stocks from multiple
@@ -37,8 +38,8 @@ def create_news_analyst_agent() -> Agent:
         - Understanding the Indian corporate landscape and business groups
         - Recognizing regulatory developments from SEBI, RBI, and government
 
-        Your tools scrape news headlines and summaries from Moneycontrol,
-        Economic Times, and Business Standard. You analyze the scraped
+        Your tools fetch news headlines and summaries from Economic Times RSS,
+        Google News, and Economic Times topic pages. You analyze the fetched
         headlines to assess sentiment.
 
         IMPORTANT: Base your sentiment analysis only on the news headlines
@@ -49,8 +50,9 @@ def create_news_analyst_agent() -> Agent:
         Neutral, Negative, or Highly Negative, with clear reasoning based
         on the actual headlines collected.""",
         tools=[
-            scrape_moneycontrol_news,
+            scrape_et_rss_news,
             scrape_economic_times_news,
+            scrape_google_news,
             get_stock_news,
             get_market_news_headlines,
         ],

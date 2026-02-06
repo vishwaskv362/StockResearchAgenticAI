@@ -16,109 +16,104 @@ HEADERS = {
 }
 
 
+def _get_nse_session() -> httpx.Client:
+    """Create an httpx client with NSE session cookies.
+
+    NSE requires a valid session cookie obtained by first visiting the homepage.
+    """
+    nse_headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nseindia.com/reports/fii-dii",
+    }
+    client = httpx.Client(headers=nse_headers, timeout=30.0, follow_redirects=True)
+    # Visit homepage to get session cookies
+    client.get("https://www.nseindia.com")
+    return client
+
+
 @tool("Get FII DII Data")
 def get_fii_dii_data() -> str:
     """
-    Get latest FII (Foreign Institutional Investors) and DII (Domestic Institutional Investors) 
-    activity data for Indian stock market.
-    
+    Get latest FII (Foreign Institutional Investors) and DII (Domestic Institutional Investors)
+    activity data for Indian stock market from NSE India.
+
     Returns:
-        JSON string with FII/DII buy/sell data for cash and derivatives segments.
+        JSON string with FII/DII buy/sell data in cash segment.
     """
     try:
-        # Try to scrape from Moneycontrol
-        url = "https://www.moneycontrol.com/stocks/marketstats/fii_dii_activity/index.php"
-        
-        with httpx.Client(headers=HEADERS, timeout=30.0, follow_redirects=True) as client:
-            response = client.get(url)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'lxml')
-                
-                # Find FII/DII tables
-                tables = soup.find_all('table')
-                
-                fii_data = {"buy": 0, "sell": 0, "net": 0}
-                dii_data = {"buy": 0, "sell": 0, "net": 0}
-                
-                for table in tables:
-                    text = table.get_text().lower()
-                    if 'fii' in text or 'foreign' in text:
-                        # Try to extract numbers
-                        numbers = re.findall(r'[\d,]+\.?\d*', table.get_text())
-                        if len(numbers) >= 3:
-                            try:
-                                fii_data["buy"] = float(numbers[0].replace(',', ''))
-                                fii_data["sell"] = float(numbers[1].replace(',', ''))
-                                fii_data["net"] = fii_data["buy"] - fii_data["sell"]
-                            except (ValueError, IndexError):
-                                pass
+        client = _get_nse_session()
+        try:
+            response = client.get("https://www.nseindia.com/api/fiidiiTradeReact")
+        finally:
+            client.close()
 
-                    if 'dii' in text or 'domestic' in text:
-                        numbers = re.findall(r'[\d,]+\.?\d*', table.get_text())
-                        if len(numbers) >= 3:
-                            try:
-                                dii_data["buy"] = float(numbers[0].replace(',', ''))
-                                dii_data["sell"] = float(numbers[1].replace(',', ''))
-                                dii_data["net"] = dii_data["buy"] - dii_data["sell"]
-                            except (ValueError, IndexError):
-                                pass
-                
-                # Determine market sentiment
-                total_net = fii_data["net"] + dii_data["net"]
-                if total_net > 500:
-                    sentiment = "Strong Bullish (Heavy Buying)"
-                elif total_net > 0:
-                    sentiment = "Mildly Bullish"
-                elif total_net > -500:
-                    sentiment = "Mildly Bearish"
-                else:
-                    sentiment = "Strong Bearish (Heavy Selling)"
-                
-                return json.dumps({
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "fii": {
-                        "buy_value_cr": fii_data["buy"],
-                        "sell_value_cr": fii_data["sell"],
-                        "net_value_cr": fii_data["net"],
-                        "activity": "Net Buyer" if fii_data["net"] > 0 else "Net Seller",
-                    },
-                    "dii": {
-                        "buy_value_cr": dii_data["buy"],
-                        "sell_value_cr": dii_data["sell"],
-                        "net_value_cr": dii_data["net"],
-                        "activity": "Net Buyer" if dii_data["net"] > 0 else "Net Seller",
-                    },
-                    "combined": {
-                        "total_net_cr": total_net,
-                        "market_sentiment": sentiment,
-                    },
-                    "note": "Values in Indian Rupees Crores. Positive net = buying, Negative = selling.",
-                    "source": "Market Data",
-                    "fetched_at": datetime.now().isoformat(),
-                }, indent=2)
-        
-        # Return sample data if scraping fails
+        if response.status_code != 200:
+            return json.dumps({
+                "error": f"NSE API returned status {response.status_code}",
+                "suggestion": "Check https://www.nseindia.com/reports/fii-dii directly",
+                "fetched_at": datetime.now().isoformat(),
+            }, indent=2)
+
+        api_data = response.json()
+
+        fii_data = {"buy": 0.0, "sell": 0.0, "net": 0.0}
+        dii_data = {"buy": 0.0, "sell": 0.0, "net": 0.0}
+        data_date = datetime.now().strftime("%Y-%m-%d")
+
+        for entry in api_data:
+            category = entry.get("category", "").upper()
+            if "FII" in category or "FPI" in category:
+                fii_data["buy"] = float(entry.get("buyValue", 0))
+                fii_data["sell"] = float(entry.get("sellValue", 0))
+                fii_data["net"] = float(entry.get("netValue", fii_data["buy"] - fii_data["sell"]))
+                if entry.get("date"):
+                    data_date = entry["date"]
+            elif "DII" in category:
+                dii_data["buy"] = float(entry.get("buyValue", 0))
+                dii_data["sell"] = float(entry.get("sellValue", 0))
+                dii_data["net"] = float(entry.get("netValue", dii_data["buy"] - dii_data["sell"]))
+
+        # Determine market sentiment
+        total_net = fii_data["net"] + dii_data["net"]
+        if total_net > 500:
+            sentiment = "Strong Bullish (Heavy Buying)"
+        elif total_net > 0:
+            sentiment = "Mildly Bullish"
+        elif total_net > -500:
+            sentiment = "Mildly Bearish"
+        else:
+            sentiment = "Strong Bearish (Heavy Selling)"
+
         return json.dumps({
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": data_date,
             "fii": {
-                "note": "Unable to fetch live data. Please check NSE/BSE websites for latest FII/DII data.",
-                "typical_range": "FII daily activity ranges from -5000 Cr to +5000 Cr",
+                "buy_value_cr": fii_data["buy"],
+                "sell_value_cr": fii_data["sell"],
+                "net_value_cr": fii_data["net"],
+                "activity": "Net Buyer" if fii_data["net"] > 0 else "Net Seller",
             },
             "dii": {
-                "note": "DII typically acts as counterbalance to FII activity",
+                "buy_value_cr": dii_data["buy"],
+                "sell_value_cr": dii_data["sell"],
+                "net_value_cr": dii_data["net"],
+                "activity": "Net Buyer" if dii_data["net"] > 0 else "Net Seller",
             },
-            "where_to_check": [
-                "https://www.nseindia.com/reports/fii-dii",
-                "https://www.moneycontrol.com/stocks/marketstats/fii_dii_activity/",
-            ],
+            "combined": {
+                "total_net_cr": total_net,
+                "market_sentiment": sentiment,
+            },
+            "note": "Values in Indian Rupees Crores. Positive net = buying, Negative = selling.",
+            "source": "NSE India",
             "fetched_at": datetime.now().isoformat(),
         }, indent=2)
-    
+
     except Exception as e:
         return json.dumps({
             "error": str(e),
-            "suggestion": "Check NSE/BSE websites directly for FII/DII data",
+            "suggestion": "Check https://www.nseindia.com/reports/fii-dii directly for FII/DII data",
+            "fetched_at": datetime.now().isoformat(),
         }, indent=2)
 
 

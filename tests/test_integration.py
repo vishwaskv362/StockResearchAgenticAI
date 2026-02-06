@@ -100,15 +100,15 @@ class TestNewsScrapingIntegration:
     
     @pytest.mark.integration
     @pytest.mark.slow
-    def test_real_moneycontrol_scraping(self, valid_symbol):
-        """Test real Moneycontrol news scraping."""
-        from tools.news_scraper import scrape_moneycontrol_news, _news_cache
-        
+    def test_real_et_rss_scraping(self, valid_symbol):
+        """Test real ET RSS news scraping."""
+        from tools.news_scraper import scrape_et_rss_news, _news_cache
+
         _news_cache.clear()
-        
-        result = scrape_moneycontrol_news.func(valid_symbol, 5)
+
+        result = scrape_et_rss_news.func(valid_symbol, 5)
         data = json.loads(result)
-        
+
         assert isinstance(data, dict)
         assert "symbol" in data
         # May or may not have articles depending on news availability
@@ -274,13 +274,12 @@ class TestErrorRecoveryIntegration:
     @pytest.mark.integration
     def test_recovers_from_network_issues(self):
         """Test recovery from simulated network issues."""
-        # This test verifies the retry mechanism works
-        from tools.news_scraper import scrape_moneycontrol_news
-        
+        from tools.news_scraper import scrape_et_rss_news
+
         # Even with potential network issues, should return valid JSON
-        result = scrape_moneycontrol_news.func("RELIANCE", 5)
+        result = scrape_et_rss_news.func("RELIANCE", 5)
         data = json.loads(result)
-        
+
         assert isinstance(data, dict)
 
 

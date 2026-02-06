@@ -10,8 +10,9 @@ from tools.market_data import (
     get_nse_stock_quote,
 )
 from tools.news_scraper import (
-    scrape_moneycontrol_news,
+    scrape_et_rss_news,
     scrape_economic_times_news,
+    scrape_google_news,
     get_stock_news,
 )
 from tools.analysis import (
@@ -30,8 +31,9 @@ __all__ = [
     "get_historical_data",
     "get_index_data",
     "get_nse_stock_quote",
-    "scrape_moneycontrol_news",
+    "scrape_et_rss_news",
     "scrape_economic_times_news",
+    "scrape_google_news",
     "get_stock_news",
     "calculate_technical_indicators",
     "get_fundamental_metrics",

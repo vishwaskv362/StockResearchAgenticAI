@@ -127,29 +127,29 @@ def sample_news_data() -> dict:
     """Sample news scraping result."""
     return {
         "symbol": "RELIANCE",
-        "source": "Moneycontrol",
+        "source": "Economic Times RSS",
         "articles_count": 3,
         "articles": [
             {
                 "title": "Reliance Industries Q3 Results: Net profit rises 15%",
                 "summary": "Reliance reported strong quarterly results...",
-                "url": "https://example.com/news1",
+                "url": "https://economictimes.indiatimes.com/articleshow/12345.cms",
                 "published": datetime.now().isoformat(),
-                "source": "Moneycontrol",
+                "source": "Economic Times RSS",
             },
             {
                 "title": "RIL to invest Rs 75,000 crore in new energy business",
                 "summary": "The company announced major investments...",
-                "url": "https://example.com/news2",
+                "url": "https://economictimes.indiatimes.com/articleshow/12346.cms",
                 "published": datetime.now().isoformat(),
-                "source": "Moneycontrol",
+                "source": "Economic Times RSS",
             },
             {
                 "title": "Analysts upgrade Reliance with target of Rs 2,800",
                 "summary": "Multiple brokerages have upgraded...",
-                "url": "https://example.com/news3",
+                "url": "https://economictimes.indiatimes.com/articleshow/12347.cms",
                 "published": datetime.now().isoformat(),
-                "source": "Moneycontrol",
+                "source": "Google News (Moneycontrol)",
             },
         ],
         "fetched_at": datetime.now().isoformat(),
@@ -212,29 +212,26 @@ def mock_httpx_response():
 
 
 @pytest.fixture
-def sample_moneycontrol_html() -> str:
-    """Sample Moneycontrol HTML for news scraping tests."""
-    return """
-    <html>
-    <body>
-        <ul class="news-list">
-            <li class="clearfix">
-                <a href="/news/business/reliance-q3-results-13781179.html">
-                    Reliance Q3 Results: Net profit rises 15%
-                </a>
-                <p>Reliance Industries reported strong quarterly results with net profit...</p>
-                <span class="date">2 hours ago</span>
-            </li>
-            <li class="clearfix">
-                <a href="/news/business/ril-investment-13781180.html">
-                    RIL announces Rs 75,000 crore investment in green energy
-                </a>
-                <p>The company announced major investments in renewable energy...</p>
-                <span class="date">5 hours ago</span>
-            </li>
-        </ul>
-    </body>
-    </html>
+def sample_et_rss_xml() -> str:
+    """Sample ET RSS XML for news scraping tests."""
+    return """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+    <channel>
+        <title>ET Markets - Stocks</title>
+        <item>
+            <title>Reliance Q3 Results: Net profit rises 15%</title>
+            <link>https://economictimes.indiatimes.com/articleshow/12345.cms</link>
+            <description>Reliance Industries reported strong quarterly results with net profit...</description>
+            <pubDate>Fri, 07 Feb 2026 10:30:00 +0530</pubDate>
+        </item>
+        <item>
+            <title>RIL announces Rs 75,000 crore investment in green energy</title>
+            <link>https://economictimes.indiatimes.com/articleshow/12346.cms</link>
+            <description>The company announced major investments in renewable energy...</description>
+            <pubDate>Fri, 07 Feb 2026 08:00:00 +0530</pubDate>
+        </item>
+    </channel>
+    </rss>
     """
 
 

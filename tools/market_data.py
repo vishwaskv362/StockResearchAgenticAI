@@ -341,6 +341,34 @@ def _categorize_market_cap(market_cap: int) -> str:
         return "Small Cap"
 
 
+def get_trending_stocks() -> dict:
+    """Get top gainers and losers from NSE (cached, not a CrewAI tool).
+
+    Returns dict with 'gainers' and 'losers' lists.
+    Each entry has 'symbol', 'ltp', 'netPrice' (change %).
+    Falls back to empty lists on failure.
+    """
+    cache_key = "trending_stocks"
+    if _is_cache_valid(cache_key):
+        return _cache_get(cache_key)["data"]
+
+    try:
+        from nsetools import Nse
+        nse = Nse()
+
+        gainers = nse.get_top_gainers()
+        losers = nse.get_top_losers()
+
+        data = {
+            "gainers": gainers if isinstance(gainers, list) else [],
+            "losers": losers if isinstance(losers, list) else [],
+        }
+        _cache_set(cache_key, data)
+        return data
+    except Exception:
+        return {"gainers": [], "losers": []}
+
+
 def get_peer_comparison(symbol: str, sector: str) -> dict:
     """Get comparison with sector peers (helper function, not a tool)."""
     from config import SECTORS

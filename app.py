@@ -6,6 +6,8 @@ import streamlit as st
 import json
 from datetime import datetime
 import pandas as pd
+import plotly.graph_objects as go
+import yfinance as yf
 
 # Must be first Streamlit command
 st.set_page_config(
@@ -16,7 +18,7 @@ st.set_page_config(
 )
 
 # Import tools after streamlit config
-from tools.market_data import get_stock_price, get_stock_info, get_historical_data, get_index_data
+from tools.market_data import get_stock_price, get_stock_info, get_historical_data, get_index_data, get_trending_stocks
 from tools.news_scraper import get_stock_news
 from tools.analysis import calculate_technical_indicators, get_fundamental_metrics, analyze_price_action
 from tools.institutional import get_fii_dii_data, get_bulk_block_deals
@@ -298,16 +300,54 @@ def render_sidebar():
             help="Enter NSE stock symbol"
         ).upper().strip()
         
-        # Quick select
-        st.subheader("⚡ Quick Select")
-        selected_stock = st.selectbox(
-            "Popular Stocks",
-            [""] + NIFTY50_STOCKS[:20],
-            format_func=lambda x: "Select a stock..." if x == "" else x
-        )
-        
-        if selected_stock:
-            symbol = selected_stock
+        # Trending stocks
+        st.subheader("🔥 Trending Today")
+        trending = get_trending_stocks()
+        gainers = trending.get("gainers", [])
+        losers = trending.get("losers", [])
+
+        if gainers or losers:
+            trend_tab1, trend_tab2 = st.tabs(["Top Gainers", "Top Losers"])
+
+            with trend_tab1:
+                for g in gainers[:5]:
+                    sym = g.get("symbol", "")
+                    chg = g.get("netPrice", 0)
+                    st.markdown(f"**{sym}** :green[+{chg}%]")
+                gainer_symbols = [g.get("symbol", "") for g in gainers[:5] if g.get("symbol")]
+                selected_gainer = st.selectbox(
+                    "Select gainer",
+                    [""] + gainer_symbols,
+                    format_func=lambda x: "Pick a stock..." if x == "" else x,
+                    key="gainer_select",
+                )
+                if selected_gainer:
+                    symbol = selected_gainer
+
+            with trend_tab2:
+                for ls in losers[:5]:
+                    sym = ls.get("symbol", "")
+                    chg = ls.get("netPrice", 0)
+                    st.markdown(f"**{sym}** :red[{chg}%]")
+                loser_symbols = [ls.get("symbol", "") for ls in losers[:5] if ls.get("symbol")]
+                selected_loser = st.selectbox(
+                    "Select loser",
+                    [""] + loser_symbols,
+                    format_func=lambda x: "Pick a stock..." if x == "" else x,
+                    key="loser_select",
+                )
+                if selected_loser:
+                    symbol = selected_loser
+        else:
+            # Fallback to hardcoded list
+            st.subheader("⚡ Quick Select")
+            selected_stock = st.selectbox(
+                "Popular Stocks",
+                [""] + NIFTY50_STOCKS[:20],
+                format_func=lambda x: "Select a stock..." if x == "" else x,
+            )
+            if selected_stock:
+                symbol = selected_stock
         
         # Sector filter
         st.subheader("🏭 Browse by Sector")
@@ -379,58 +419,268 @@ def render_market_overview():
         st.warning(f"Could not fetch market data: {e}")
 
 
+def _fetch_chart_data(symbol: str, period: str) -> pd.DataFrame:
+    """Fetch OHLCV data from yfinance for charting.
+
+    Returns a DataFrame with a **timezone-naive IST** DatetimeIndex.
+    Intraday timestamps are shifted to interval-end so the last candle
+    of the day reads 3:30 PM (market close).
+    For 1D/1W the last candle's Close is patched with the official daily
+    closing price so the chart endpoint matches the header price.
+    """
+    from tools.market_data import _get_nse_symbol
+    from datetime import timedelta, time as dt_time
+
+    MARKET_CLOSE = dt_time(15, 30)
+
+    # (yfinance period, interval, timedelta to shift candle to end-of-interval)
+    period_map = {
+        "1D": ("5d", "5m", timedelta(minutes=5)),
+        "1W": ("5d", "5m", timedelta(minutes=5)),
+        "1M": ("1mo", "30m", timedelta(minutes=30)),
+        "3M": ("3mo", "1h", timedelta(hours=1)),
+        "6M": ("6mo", "1d", None),
+        "1Y": ("1y", "1d", None),
+        "5Y": ("5y", "1d", None),
+    }
+    yf_period, interval, shift = period_map.get(period, ("1y", "1d", None))
+
+    try:
+        ticker = yf.Ticker(_get_nse_symbol(symbol))
+        df = ticker.history(period=yf_period, interval=interval)
+
+        if df.empty:
+            return df
+
+        # Convert to naive IST (yfinance already returns Asia/Kolkata)
+        if df.index.tz is not None:
+            df.index = df.index.tz_convert("Asia/Kolkata").tz_localize(None)
+
+        # Shift intraday candles to interval-end timestamps,
+        # capping at 15:30 (market close) so the last bar is correct.
+        if shift is not None:
+            new_idx = df.index + shift
+            capped = []
+            for ts in new_idx:
+                if ts.time() > MARKET_CLOSE:
+                    ts = ts.replace(hour=15, minute=30, second=0, microsecond=0)
+                capped.append(ts)
+            df.index = pd.DatetimeIndex(capped)
+
+        # For 1D, keep only the most recent trading day
+        if period == "1D":
+            last_date = df.index[-1].date()
+            df = df[df.index.date == last_date]
+
+        # Patch the last candle of each intraday day with the official
+        # daily close so the chart endpoint matches the header price.
+        # (15-min candles miss the closing auction.)
+        if shift is not None:
+            try:
+                daily = ticker.history(period=yf_period, interval="1d")
+                if daily.index.tz is not None:
+                    daily.index = daily.index.tz_convert("Asia/Kolkata").tz_localize(None)
+                daily_close_map = {d.date(): row["Close"] for d, row in daily.iterrows()}
+                for i in range(len(df) - 1, -1, -1):
+                    ts = df.index[i]
+                    if ts.time() == MARKET_CLOSE:
+                        official = daily_close_map.get(ts.date())
+                        if official is not None:
+                            df.iloc[i, df.columns.get_loc("Close")] = official
+            except Exception:
+                pass  # best-effort; fall back to candle data
+
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _render_range_bar(label: str, low: float, high: float, current: float):
+    """Render a horizontal range bar with a triangle marker via HTML/CSS."""
+    if high <= low or high == 0:
+        return
+
+    pct = max(0, min(100, ((current - low) / (high - low)) * 100))
+
+    html = f"""
+    <div style="margin: 0.6rem 0;">
+      <div style="display:flex; justify-content:space-between; font-size:0.82rem; color:#aaa; margin-bottom:2px;">
+        <span>{label} Low — ₹{low:,.2f}</span>
+        <span>₹{high:,.2f} — {label} High</span>
+      </div>
+      <div style="position:relative; height:6px; background:linear-gradient(90deg,#ff4444 0%,#ffcc00 50%,#00C851 100%); border-radius:3px;">
+        <div style="position:absolute; top:-6px; left:{pct}%; transform:translateX(-50%);">
+          <div style="width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid white;"></div>
+        </div>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def render_stock_overview(symbol: str):
-    """Render stock overview."""
+    """Render Groww-style stock overview with price header, range bars, fundamentals grid, and chart."""
     try:
         with st.spinner(f"Fetching data for {symbol}..."):
             price_data = json.loads(get_stock_price.run(symbol))
             info_data = json.loads(get_stock_info.run(symbol))
-        
+
         if "error" in price_data:
-            st.error(f"❌ Stock not found: {symbol}")
+            st.error(f"Stock not found: {symbol}")
             return None
-        
-        # Header with stock info
+
+        # ── Section 1: Company header ──
         change = price_data.get("change", 0)
         change_pct = price_data.get("change_percent", 0)
-        trend = get_trend_emoji(change)
-        
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
-        with col1:
-            st.markdown(f"## {trend} {symbol}")
-            st.markdown(f"**{info_data.get('company_name', 'N/A')}**")
-            st.caption(f"{info_data.get('sector', 'N/A')} | {info_data.get('industry', 'N/A')}")
-        
-        with col2:
-            st.metric(
-                "Current Price",
-                f"₹{price_data.get('current_price', 0):,.2f}",
-                delta=f"{change:+.2f} ({change_pct:+.2f}%)"
+        color = "#00C851" if change >= 0 else "#ff4444"
+        sign = "+" if change >= 0 else ""
+        company_name = info_data.get("company_name", symbol)
+
+        st.markdown(
+            f"""
+            <div style="margin-bottom:0.5rem;">
+              <span style="font-size:1.1rem; color:#aaa;">{company_name}</span>
+              <span style="font-size:0.85rem; color:#888; margin-left:8px;">{info_data.get('sector', '')} · {info_data.get('industry', '')}</span>
+            </div>
+            <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;">
+              <span style="font-size:2.4rem; font-weight:700;">₹{price_data.get('current_price', 0):,.2f}</span>
+              <span style="font-size:1.1rem; color:{color}; font-weight:600;">{sign}{change:,.2f} ({sign}{change_pct:.2f}%)</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # ── Section 2: Range bars ──
+        day_low = price_data.get("low", 0)
+        day_high = price_data.get("high", 0)
+        w52_low = price_data.get("52_week_low", 0)
+        w52_high = price_data.get("52_week_high", 0)
+        current = price_data.get("current_price", 0)
+
+        if isinstance(day_low, (int, float)) and isinstance(day_high, (int, float)) and day_high > day_low:
+            _render_range_bar("Today's", day_low, day_high, current)
+        if isinstance(w52_low, (int, float)) and isinstance(w52_high, (int, float)) and w52_high > w52_low:
+            _render_range_bar("52W", w52_low, w52_high, current)
+
+        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
+
+        # ── Section 3: Fundamentals grid ──
+        st.markdown("#### Fundamentals")
+
+        def _fmt(val, prefix="", suffix=""):
+            if val is None or val == "N/A":
+                return "—"
+            return f"{prefix}{val}{suffix}"
+
+        fund_items = [
+            ("Market Cap", format_number(info_data.get("market_cap"))),
+            ("ROE", _fmt(info_data.get("roe"), suffix="%")),
+            ("P/E Ratio", _fmt(info_data.get("pe_ratio"))),
+            ("EPS", _fmt(info_data.get("eps"), prefix="₹")),
+            ("P/B Ratio", _fmt(info_data.get("pb_ratio"))),
+            ("Div. Yield", _fmt(info_data.get("dividend_yield"), suffix="%")),
+            ("Debt/Equity", _fmt(info_data.get("debt_to_equity"))),
+            ("Book Value", _fmt(info_data.get("book_value"), prefix="₹")),
+        ]
+
+        # 2-column grid, 4 rows
+        for row_start in range(0, len(fund_items), 2):
+            cols = st.columns(2)
+            for idx, col in enumerate(cols):
+                item_idx = row_start + idx
+                if item_idx < len(fund_items):
+                    label, value = fund_items[item_idx]
+                    col.markdown(
+                        f"<div style='padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);'>"
+                        f"<span style='color:#aaa; font-size:0.85rem;'>{label}</span><br>"
+                        f"<span style='font-size:1.05rem; font-weight:500;'>{value}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+
+        # ── Section 4: Interactive price chart ──
+        st.markdown("<div style='margin-top:1.5rem;'></div>", unsafe_allow_html=True)
+
+        periods = ["1D", "1W", "1M", "3M", "6M", "1Y", "5Y"]
+        selected_period = st.radio(
+            "Chart Period",
+            periods,
+            index=5,  # default 1Y
+            horizontal=True,
+            key=f"chart_period_{symbol}",
+        )
+
+        with st.spinner("Loading chart..."):
+            chart_df = _fetch_chart_data(symbol, selected_period)
+
+        if not chart_df.empty:
+            line_color = "#00C851" if change >= 0 else "#ff4444"
+            fill_color = "rgba(0,200,81,0.10)" if change >= 0 else "rgba(255,68,68,0.10)"
+            is_intraday = selected_period in ("1D", "1W", "1M")
+
+            # Hover: show 12-hour time for intraday, date for daily
+            if is_intraday:
+                hover_tpl = "₹%{y:,.2f}<extra>%{x|%d %b %Y, %I:%M %p} IST</extra>"
+            else:
+                hover_tpl = "₹%{y:,.2f}<extra>%{x|%d %b %Y}</extra>"
+
+            fig = go.Figure()
+
+            # Invisible baseline trace at the data min so fill doesn't go to y=0
+            y_floor = float(chart_df["Close"].min())
+            fig.add_trace(
+                go.Scatter(
+                    x=chart_df.index,
+                    y=[y_floor] * len(chart_df),
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
             )
-        
-        with col3:
-            st.metric("Volume", f"{price_data.get('volume', 0):,}")
-            st.caption(f"Avg: {price_data.get('avg_volume', 'N/A'):,}" if isinstance(price_data.get('avg_volume'), int) else "")
-        
-        # Key metrics row
-        st.divider()
-        
-        m1, m2, m3, m4, m5 = st.columns(5)
-        
-        with m1:
-            st.metric("Day High", f"₹{price_data.get('high', 0):,.2f}")
-        with m2:
-            st.metric("Day Low", f"₹{price_data.get('low', 0):,.2f}")
-        with m3:
-            st.metric("52W High", f"₹{price_data.get('52_week_high', 'N/A')}")
-        with m4:
-            st.metric("52W Low", f"₹{price_data.get('52_week_low', 'N/A')}")
-        with m5:
-            st.metric("Market Cap", info_data.get('market_cap_category', 'N/A'))
-        
+
+            fig.add_trace(
+                go.Scatter(
+                    x=chart_df.index,
+                    y=chart_df["Close"],
+                    mode="lines",
+                    line=dict(color=line_color, width=2),
+                    fill="tonexty",
+                    fillcolor=fill_color,
+                    showlegend=False,
+                    hovertemplate=hover_tpl,
+                )
+            )
+
+            # Pad y-axis 5% above and below the data range
+            y_min = float(chart_df["Close"].min())
+            y_max = float(chart_df["Close"].max())
+            y_pad = (y_max - y_min) * 0.05 or 1
+
+            xaxis_opts: dict = dict(showgrid=False)
+            if is_intraday:
+                xaxis_opts["tickformat"] = "%-I:%M %p"
+
+            fig.update_layout(
+                height=380,
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis=xaxis_opts,
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor="rgba(255,255,255,0.05)",
+                    side="right",
+                    range=[y_min - y_pad, y_max + y_pad],
+                    tickprefix="₹",
+                ),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_{symbol}_{selected_period}")
+        else:
+            st.info("Chart data not available for this period.")
+
         return price_data, info_data
-    
+
     except Exception as e:
         st.error(f"Error fetching stock data: {e}")
         return None
@@ -747,22 +997,22 @@ def render_news(symbol: str):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if sources_status.get("moneycontrol") == "success":
-                st.success("✅ Moneycontrol")
+            if sources_status.get("et_rss") == "success":
+                st.success("✅ ET RSS")
             else:
-                st.warning("⚠️ Moneycontrol")
-        
+                st.warning("⚠️ ET RSS")
+
         with col2:
             if sources_status.get("economic_times") == "success":
                 st.success("✅ Economic Times")
             else:
                 st.warning("⚠️ Economic Times")
-        
+
         with col3:
-            if sources_status.get("business_standard") == "success":
-                st.success("✅ Business Standard")
+            if sources_status.get("google_news") == "success":
+                st.success("✅ Google News")
             else:
-                st.warning("⚠️ Business Standard")
+                st.warning("⚠️ Google News")
         
         st.divider()
         
@@ -857,6 +1107,92 @@ def render_institutional(symbol: str):
         st.error(f"Error: {e}")
 
 
+def _generate_word_report(symbol: str, markdown_report: str, report_time: str) -> bytes:
+    """Convert a markdown report into a Word (.docx) document and return bytes."""
+    import io
+    import re
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    # Title
+    title = doc.add_heading(f"Stock Research Report — {symbol}", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Timestamp
+    ts_para = doc.add_paragraph()
+    ts_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    ts_run = ts_para.add_run(f"Generated: {report_time}")
+    ts_run.font.size = Pt(10)
+    ts_run.font.color.rgb = RGBColor(128, 128, 128)
+
+    doc.add_paragraph("")  # spacer
+
+    # Parse markdown line-by-line
+    for line in markdown_report.split("\n"):
+        stripped = line.strip()
+
+        if not stripped:
+            doc.add_paragraph("")
+            continue
+
+        # Headings
+        if stripped.startswith("### "):
+            doc.add_heading(stripped[4:], level=3)
+        elif stripped.startswith("## "):
+            doc.add_heading(stripped[3:], level=2)
+        elif stripped.startswith("# "):
+            doc.add_heading(stripped[2:], level=1)
+        elif stripped.startswith("---"):
+            doc.add_paragraph("_" * 50)
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            text = stripped[2:]
+            para = doc.add_paragraph(style="List Bullet")
+            _add_colored_run(para, text)
+        elif re.match(r"^\d+\.\s", stripped):
+            text = re.sub(r"^\d+\.\s", "", stripped)
+            para = doc.add_paragraph(style="List Number")
+            _add_colored_run(para, text)
+        else:
+            para = doc.add_paragraph()
+            _add_colored_run(para, stripped)
+
+    # Disclaimer footer
+    doc.add_paragraph("")
+    disclaimer = doc.add_paragraph()
+    disclaimer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = disclaimer.add_run(
+        "DISCLAIMER: This report is for educational purposes only. Not financial advice."
+    )
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(128, 128, 128)
+    run.italic = True
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _add_colored_run(paragraph, text: str):
+    """Add text to a paragraph, coloring BUY/SELL keywords."""
+    import re
+    from docx.shared import RGBColor
+
+    # Split on BUY/SELL keywords, preserving delimiters
+    parts = re.split(r"(STRONG BUY|STRONG SELL|BUY|SELL)", text)
+    for part in parts:
+        run = paragraph.add_run(part)
+        upper = part.strip().upper()
+        if upper in ("BUY", "STRONG BUY"):
+            run.bold = True
+            run.font.color.rgb = RGBColor(0, 128, 0)
+        elif upper in ("SELL", "STRONG SELL"):
+            run.bold = True
+            run.font.color.rgb = RGBColor(200, 0, 0)
+
+
 def render_ai_analysis(symbol: str):
     """Render AI analysis tab."""
     st.markdown("#### 🤖 AI-Powered Full Analysis")
@@ -912,43 +1248,26 @@ def render_ai_analysis(symbol: str):
             st.markdown(cleaned)
 
         st.markdown("#### 📥 Download Report")
-        
-        col1, col2, col3 = st.columns(3)
-        
+
+        col1, col2 = st.columns(2)
+
         with col1:
-            # Download as Markdown
             st.download_button(
                 label="📄 Download as Markdown",
                 data=report,
                 file_name=f"{symbol}_research_report_{report_time}.md",
                 mime="text/markdown",
-                use_container_width=True
+                use_container_width=True,
             )
-        
+
         with col2:
-            # Download as Text
+            word_bytes = _generate_word_report(symbol, report, report_time)
             st.download_button(
-                label="📝 Download as Text",
-                data=report,
-                file_name=f"{symbol}_research_report_{report_time}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        
-        with col3:
-            # Download as JSON (structured)
-            report_json = json.dumps({
-                "symbol": symbol,
-                "generated_at": report_time,
-                "report": report,
-                "source": "Stock Research Assistant - AI Analysis"
-            }, indent=2)
-            st.download_button(
-                label="📊 Download as JSON",
-                data=report_json,
-                file_name=f"{symbol}_research_report_{report_time}.json",
-                mime="application/json",
-                use_container_width=True
+                label="📝 Download as Word",
+                data=word_bytes,
+                file_name=f"{symbol}_research_report_{report_time}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
             )
 
 

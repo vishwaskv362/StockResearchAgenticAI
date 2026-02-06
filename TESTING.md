@@ -73,7 +73,7 @@ tests/
 - Fast execution for rapid development feedback
 
 ### 2. Integration Tests
-- Hit real APIs (Yahoo Finance, NSE, news sites)
+- Hit real APIs (Yahoo Finance, NSE India, ET RSS, Google News RSS)
 - Marked with `@pytest.mark.slow` for selective running
 - Verify actual data structure and response handling
 
@@ -95,7 +95,8 @@ tests/
 | `valid_symbol` | Single valid symbol (RELIANCE) |
 | `invalid_symbol` | Invalid symbol for error testing |
 | `mock_yfinance` | Mocked yfinance for unit tests |
-| `mock_httpx_client` | Mocked HTTP client for news tests |
+| `mock_httpx_response` | Mocked HTTP response for scraping tests |
+| `sample_et_rss_xml` | Sample ET RSS XML for news tests |
 | `sample_historical_data` | Realistic OHLCV DataFrame |
 
 ## Coverage Goals

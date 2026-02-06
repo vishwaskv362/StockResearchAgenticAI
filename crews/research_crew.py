@@ -58,7 +58,7 @@ def create_stock_research_crew(symbol: str, analysis_type: str = "full") -> Crew
         description=f"""Gather and analyze all recent news about {symbol}:
 
         1. Use the "Get Comprehensive Stock News" tool to fetch news from
-           Moneycontrol, Economic Times, and Business Standard in one call
+           Economic Times RSS, Google News, and Economic Times in one call
         2. Use "Get Market News Headlines" to check for broader market news
         3. Analyze the sentiment of each headline and summary returned
         4. Identify any material news that could impact stock price

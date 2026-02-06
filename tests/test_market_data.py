@@ -428,6 +428,91 @@ class TestHelperFunctions:
         assert result == "Unknown"
 
 
+class TestGetTrendingStocks:
+    """Tests for get_trending_stocks helper."""
+
+    @pytest.mark.unit
+    def test_returns_gainers_and_losers(self):
+        """Test that trending stocks returns both gainers and losers lists."""
+        from tools.market_data import get_trending_stocks, _cache
+
+        _cache.clear()
+
+        mock_gainers = [
+            {"symbol": "ABC", "ltp": "100.0", "netPrice": "5.2"},
+            {"symbol": "DEF", "ltp": "200.0", "netPrice": "3.1"},
+        ]
+        mock_losers = [
+            {"symbol": "GHI", "ltp": "50.0", "netPrice": "-4.0"},
+        ]
+
+        with patch("nsetools.Nse") as mock_nse_cls:
+            inst = MagicMock()
+            mock_nse_cls.return_value = inst
+            inst.get_top_gainers.return_value = mock_gainers
+            inst.get_top_losers.return_value = mock_losers
+
+            result = get_trending_stocks()
+
+        assert "gainers" in result
+        assert "losers" in result
+        assert len(result["gainers"]) == 2
+        assert len(result["losers"]) == 1
+        assert result["gainers"][0]["symbol"] == "ABC"
+
+    @pytest.mark.unit
+    def test_caches_results(self):
+        """Test that subsequent calls return cached data without hitting API."""
+        from tools.market_data import get_trending_stocks, _cache
+
+        _cache.clear()
+
+        mock_data = [{"symbol": "XYZ", "ltp": "300.0", "netPrice": "2.0"}]
+
+        with patch("nsetools.Nse") as mock_nse_cls:
+            inst = MagicMock()
+            mock_nse_cls.return_value = inst
+            inst.get_top_gainers.return_value = mock_data
+            inst.get_top_losers.return_value = []
+
+            first = get_trending_stocks()
+            second = get_trending_stocks()
+
+        # Nse constructor should only be called once (second call uses cache)
+        assert mock_nse_cls.call_count == 1
+        assert first == second
+
+    @pytest.mark.unit
+    def test_falls_back_on_exception(self):
+        """Test graceful fallback when nsetools raises an exception."""
+        from tools.market_data import get_trending_stocks, _cache
+
+        _cache.clear()
+
+        with patch("nsetools.Nse", side_effect=Exception("NSE down")):
+            result = get_trending_stocks()
+
+        assert result == {"gainers": [], "losers": []}
+
+    @pytest.mark.unit
+    def test_handles_non_list_response(self):
+        """Test that non-list API responses are safely converted to empty lists."""
+        from tools.market_data import get_trending_stocks, _cache
+
+        _cache.clear()
+
+        with patch("nsetools.Nse") as mock_nse_cls:
+            inst = MagicMock()
+            mock_nse_cls.return_value = inst
+            inst.get_top_gainers.return_value = None  # unexpected
+            inst.get_top_losers.return_value = "bad data"  # unexpected
+
+            result = get_trending_stocks()
+
+        assert result["gainers"] == []
+        assert result["losers"] == []
+
+
 class TestNseData:
     """Tests for NSE-specific data fetching."""
     

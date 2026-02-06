@@ -60,10 +60,10 @@ uv run python run_analysis.py RELIANCE --quick
 - Volume analysis
 - Delivery percentage (NSE)
 
-### 📰 News Scraping
-- **Moneycontrol** - Latest stock news
-- **Economic Times** - Market updates
-- **Business Standard** - Analysis
+### 📰 News Aggregation
+- **Economic Times RSS** - Stock-specific news via RSS feed
+- **Google News RSS** - Broad coverage from Indian financial publications
+- **Economic Times** - Topic page scraping
 - Sentiment analysis for each article
 
 ### 💹 Technical Analysis
@@ -81,7 +81,7 @@ uv run python run_analysis.py RELIANCE --quick
 - Growth metrics
 
 ### 🏦 Institutional Tracking
-- FII/DII activity
+- FII/DII activity (live data from NSE India API)
 - Bulk/Block deals
 - Promoter holdings
 - Mutual fund activity
@@ -95,7 +95,7 @@ This project uses **CrewAI** to orchestrate 6 specialized AI agents that work to
 | Agent | Role | Responsibility |
 |-------|------|----------------|
 | **📊 Market Data Analyst** | Data Collector | Fetches real-time prices, volume, 52-week range, historical data |
-| **📰 News & Sentiment Analyst** | News Hunter | Scrapes news from 3 sources, analyzes sentiment (positive/negative/neutral) |
+| **📰 News & Sentiment Analyst** | News Hunter | Fetches news from ET RSS, Google News, and ET topic pages, analyzes sentiment |
 | **💰 Fundamental Analyst** | Value Investor | Evaluates P/E, P/B, ROE, debt ratios, margins, growth metrics |
 | **📈 Technical Analyst** | Chart Reader | Calculates RSI, MACD, moving averages, support/resistance, trend signals |
 | **🎯 Investment Strategist** | Decision Maker | Combines all analysis → provides BUY/SELL/HOLD with price targets |
@@ -118,7 +118,7 @@ User Request: "Analyze RELIANCE"
 │                         │                                   │
 │                         ▼                                   │
 │  Step 2: 📰 News Agent                                      │
-│          → Scrapes Moneycontrol, ET, Business Standard      │
+│          → Fetches from ET RSS, Google News, ET pages       │
 │          → Analyzes sentiment of each article               │
 │          → Returns: 5 positive, 2 neutral, 1 negative       │
 │                         │                                   │
@@ -169,13 +169,13 @@ ticker = yf.Ticker("RELIANCE.NS")  # .NS suffix for NSE
 price = ticker.info["currentPrice"]  # ₹1,395.40
 ```
 
-### News Sources (Web Scraping)
+### News Sources (RSS + Web Scraping)
 
-| Source | URL Pattern | What We Extract |
-|--------|-------------|-----------------|
-| **Moneycontrol** | `moneycontrol.com/news/tags/{symbol}` | Headlines, summary, date |
-| **Economic Times** | `economictimes.com/topic/{symbol}` | Headlines, summary, date |
-| **Business Standard** | `business-standard.com/topic/{symbol}` | Headlines, summary, date |
+| Source | Method | What We Extract |
+|--------|--------|-----------------|
+| **Economic Times RSS** | RSS feed (stocks) | Headlines, summary, date, link |
+| **Google News RSS** | RSS search (`{symbol} NSE stock`) | Headlines, date, original source |
+| **Economic Times** | HTML scraping (`/topic/{symbol}`) | Headlines, summary, date |
 
 ### Technical Indicators (Calculated)
 

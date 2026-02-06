@@ -277,29 +277,409 @@ class TestUIDataFormatting:
 
 class TestUIErrorHandling:
     """Tests for UI error handling."""
-    
+
     @pytest.mark.unit
     def test_handles_api_error_response(self):
         """Test handling API error responses."""
         error_response = json.dumps({"error": "Symbol not found"})
         data = json.loads(error_response)
-        
+
         assert "error" in data
-    
+
     @pytest.mark.unit
     def test_handles_empty_data(self):
         """Test handling empty data responses."""
         empty_response = json.dumps({"symbol": "TEST", "articles": []})
         data = json.loads(empty_response)
-        
+
         assert len(data.get("articles", [])) == 0
-    
+
     @pytest.mark.unit
     def test_handles_missing_fields(self):
         """Test handling responses with missing fields."""
         partial_response = json.dumps({"symbol": "TEST"})
         data = json.loads(partial_response)
-        
+
         # Should handle missing fields gracefully
         assert data.get("current_price", "N/A") == "N/A"
         assert data.get("volume", 0) == 0
+
+
+# ============================================================
+# Tests for new Groww-style features
+# ============================================================
+
+class TestFetchChartData:
+    """Tests for _fetch_chart_data helper."""
+
+    @pytest.mark.unit
+    def test_period_map_covers_all_buttons(self):
+        """Verify all 7 chart period buttons have yfinance mappings."""
+        # Replicate the mapping from _fetch_chart_data
+        period_map = {
+            "1D": ("5d", "5m"),
+            "1W": ("5d", "5m"),
+            "1M": ("1mo", "30m"),
+            "3M": ("3mo", "1h"),
+            "6M": ("6mo", "1d"),
+            "1Y": ("1y", "1d"),
+            "5Y": ("5y", "1d"),
+        }
+
+        expected_periods = ["1D", "1W", "1M", "3M", "6M", "1Y", "5Y"]
+        for p in expected_periods:
+            assert p in period_map, f"Missing period mapping for {p}"
+            yf_period, interval = period_map[p]
+            assert yf_period, f"Empty yfinance period for {p}"
+            assert interval, f"Empty interval for {p}"
+
+    @pytest.mark.unit
+    def test_1d_period_uses_5d_with_5m(self):
+        """Test that 1D period fetches 5d of 5m data then filters to today."""
+        period_map = {
+            "1D": ("5d", "5m"),
+        }
+        yf_period, interval = period_map["1D"]
+        assert yf_period == "5d"
+        assert interval == "5m"
+
+    @pytest.mark.unit
+    def test_fetch_chart_data_returns_dataframe(self):
+        """Test _fetch_chart_data returns a DataFrame with mocked yfinance."""
+        import pandas as pd
+        import numpy as np
+
+        with patch('streamlit.set_page_config'), \
+             patch('streamlit.markdown'), \
+             patch.dict('sys.modules', {'streamlit': MagicMock()}):
+
+            dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
+            mock_df = pd.DataFrame({
+                'Open': np.random.uniform(100, 110, 30),
+                'High': np.random.uniform(110, 120, 30),
+                'Low': np.random.uniform(90, 100, 30),
+                'Close': np.random.uniform(100, 110, 30),
+                'Volume': np.random.randint(1000, 10000, 30),
+            }, index=dates)
+
+            with patch('yfinance.Ticker') as mock_ticker:
+                mock_ticker.return_value.history.return_value = mock_df
+
+                # Import after mocking streamlit
+                import importlib
+                import app as app_module
+                importlib.reload(app_module)
+
+                result = app_module._fetch_chart_data("RELIANCE", "1M")
+
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+            assert "Close" in result.columns
+
+    @pytest.mark.unit
+    def test_fetch_chart_data_returns_empty_on_error(self):
+        """Test _fetch_chart_data returns empty DataFrame when yfinance fails."""
+        import pandas as pd
+
+        with patch.dict('sys.modules', {'streamlit': MagicMock()}):
+            with patch('yfinance.Ticker', side_effect=Exception("API error")):
+                import importlib
+                import app as app_module
+                importlib.reload(app_module)
+
+                result = app_module._fetch_chart_data("BADSTOCK", "1Y")
+
+            assert isinstance(result, pd.DataFrame)
+            assert result.empty
+
+
+class TestRangeBarLogic:
+    """Tests for range bar percentage calculation logic."""
+
+    @pytest.mark.unit
+    def test_range_bar_percentage_at_low(self):
+        """Test that current at low gives 0%."""
+        low, high, current = 100.0, 200.0, 100.0
+        pct = max(0, min(100, ((current - low) / (high - low)) * 100))
+        assert pct == 0.0
+
+    @pytest.mark.unit
+    def test_range_bar_percentage_at_high(self):
+        """Test that current at high gives 100%."""
+        low, high, current = 100.0, 200.0, 200.0
+        pct = max(0, min(100, ((current - low) / (high - low)) * 100))
+        assert pct == 100.0
+
+    @pytest.mark.unit
+    def test_range_bar_percentage_midpoint(self):
+        """Test that current at midpoint gives 50%."""
+        low, high, current = 100.0, 200.0, 150.0
+        pct = max(0, min(100, ((current - low) / (high - low)) * 100))
+        assert pct == 50.0
+
+    @pytest.mark.unit
+    def test_range_bar_clamps_below_low(self):
+        """Test that current below low is clamped to 0%."""
+        low, high, current = 100.0, 200.0, 50.0
+        pct = max(0, min(100, ((current - low) / (high - low)) * 100))
+        assert pct == 0.0
+
+    @pytest.mark.unit
+    def test_range_bar_clamps_above_high(self):
+        """Test that current above high is clamped to 100%."""
+        low, high, current = 100.0, 200.0, 250.0
+        pct = max(0, min(100, ((current - low) / (high - low)) * 100))
+        assert pct == 100.0
+
+    @pytest.mark.unit
+    def test_range_bar_skips_invalid(self):
+        """Test that high <= low is rejected (guard clause)."""
+        # Replicate the guard from _render_range_bar
+        low, high = 200.0, 100.0
+        should_render = not (high <= low or high == 0)
+        assert should_render is False
+
+    @pytest.mark.unit
+    def test_range_bar_skips_zero_high(self):
+        """Test that high == 0 is rejected."""
+        should_render = not (0 <= 0 or 0 == 0)
+        assert should_render is False
+
+
+class TestGenerateWordReport:
+    """Tests for Word document generation."""
+
+    @pytest.mark.unit
+    def test_returns_bytes(self):
+        """Test that word report returns non-empty bytes."""
+        from app import _generate_word_report
+
+        md = "# Title\n\nSome text.\n\n- Bullet one\n- Bullet two\n"
+        result = _generate_word_report("RELIANCE", md, "2026-02-07_10-30")
+
+        assert isinstance(result, bytes)
+        assert len(result) > 0
+
+    @pytest.mark.unit
+    def test_output_is_valid_docx(self):
+        """Test that output bytes can be loaded as a valid Word document."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "# Report\n\n## Section\n\nHello world\n"
+        result = _generate_word_report("TCS", md, "2026-02-07_12-00")
+
+        doc = Document(io.BytesIO(result))
+        # Should have at least the title heading + timestamp + spacer + content
+        assert len(doc.paragraphs) >= 3
+
+    @pytest.mark.unit
+    def test_headings_are_parsed(self):
+        """Test that markdown headings become Word headings."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "# Heading 1\n## Heading 2\n### Heading 3\n"
+        result = _generate_word_report("INFY", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        heading_texts = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+
+        assert "Heading 1" in heading_texts
+        assert "Heading 2" in heading_texts
+        assert "Heading 3" in heading_texts
+
+    @pytest.mark.unit
+    def test_bullet_list_items(self):
+        """Test that markdown bullets become Word list items."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "- Item A\n- Item B\n* Item C\n"
+        result = _generate_word_report("HDFC", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        bullet_texts = [p.text for p in doc.paragraphs if "List" in p.style.name]
+
+        assert "Item A" in bullet_texts
+        assert "Item B" in bullet_texts
+        assert "Item C" in bullet_texts
+
+    @pytest.mark.unit
+    def test_numbered_list_items(self):
+        """Test that markdown numbered items become Word numbered lists."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "1. First\n2. Second\n3. Third\n"
+        result = _generate_word_report("SBI", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        numbered_texts = [p.text for p in doc.paragraphs if "Number" in p.style.name]
+
+        assert "First" in numbered_texts
+        assert "Second" in numbered_texts
+
+    @pytest.mark.unit
+    def test_disclaimer_present(self):
+        """Test that the disclaimer footer is included."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "Some analysis text.\n"
+        result = _generate_word_report("WIPRO", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        all_text = " ".join(p.text for p in doc.paragraphs)
+
+        assert "DISCLAIMER" in all_text
+        assert "educational purposes" in all_text
+
+    @pytest.mark.unit
+    def test_title_contains_symbol(self):
+        """Test that the title heading includes the stock symbol."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "Content\n"
+        result = _generate_word_report("BAJAJ", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        title_para = doc.paragraphs[0]
+
+        assert "BAJAJ" in title_para.text
+
+    @pytest.mark.unit
+    def test_horizontal_rule_converted(self):
+        """Test that --- becomes an underline separator."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "Above\n---\nBelow\n"
+        result = _generate_word_report("TEST", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        all_text = [p.text for p in doc.paragraphs]
+        assert "_" * 50 in all_text
+
+    @pytest.mark.unit
+    def test_empty_report(self):
+        """Test that empty markdown still generates a valid docx."""
+        from app import _generate_word_report
+
+        result = _generate_word_report("EMPTY", "", "2026-02-07")
+        assert isinstance(result, bytes)
+        assert len(result) > 0
+
+
+class TestAddColoredRun:
+    """Tests for BUY/SELL keyword coloring in Word documents."""
+
+    @pytest.mark.unit
+    def test_buy_is_green_and_bold(self):
+        """Test that BUY keyword gets green color and bold."""
+        from docx import Document
+        from docx.shared import RGBColor
+        from app import _add_colored_run
+
+        doc = Document()
+        para = doc.add_paragraph()
+        _add_colored_run(para, "Recommendation: BUY this stock")
+
+        runs = para.runs
+        buy_runs = [r for r in runs if r.text.strip() == "BUY"]
+        assert len(buy_runs) == 1
+        assert buy_runs[0].bold is True
+        assert buy_runs[0].font.color.rgb == RGBColor(0, 128, 0)
+
+    @pytest.mark.unit
+    def test_sell_is_red_and_bold(self):
+        """Test that SELL keyword gets red color and bold."""
+        from docx import Document
+        from docx.shared import RGBColor
+        from app import _add_colored_run
+
+        doc = Document()
+        para = doc.add_paragraph()
+        _add_colored_run(para, "Signal: SELL immediately")
+
+        runs = para.runs
+        sell_runs = [r for r in runs if r.text.strip() == "SELL"]
+        assert len(sell_runs) == 1
+        assert sell_runs[0].bold is True
+        assert sell_runs[0].font.color.rgb == RGBColor(200, 0, 0)
+
+    @pytest.mark.unit
+    def test_strong_buy_is_green(self):
+        """Test that STRONG BUY gets green coloring."""
+        from docx import Document
+        from docx.shared import RGBColor
+        from app import _add_colored_run
+
+        doc = Document()
+        para = doc.add_paragraph()
+        _add_colored_run(para, "Rating: STRONG BUY")
+
+        runs = para.runs
+        sb_runs = [r for r in runs if r.text.strip() == "STRONG BUY"]
+        assert len(sb_runs) == 1
+        assert sb_runs[0].bold is True
+        assert sb_runs[0].font.color.rgb == RGBColor(0, 128, 0)
+
+    @pytest.mark.unit
+    def test_strong_sell_is_red(self):
+        """Test that STRONG SELL gets red coloring."""
+        from docx import Document
+        from docx.shared import RGBColor
+        from app import _add_colored_run
+
+        doc = Document()
+        para = doc.add_paragraph()
+        _add_colored_run(para, "Rating: STRONG SELL")
+
+        runs = para.runs
+        ss_runs = [r for r in runs if r.text.strip() == "STRONG SELL"]
+        assert len(ss_runs) == 1
+        assert ss_runs[0].bold is True
+        assert ss_runs[0].font.color.rgb == RGBColor(200, 0, 0)
+
+    @pytest.mark.unit
+    def test_text_without_keywords_is_plain(self):
+        """Test that regular text gets no special formatting."""
+        from docx import Document
+        from app import _add_colored_run
+
+        doc = Document()
+        para = doc.add_paragraph()
+        _add_colored_run(para, "This is plain text with no signals")
+
+        runs = para.runs
+        assert len(runs) == 1
+        assert runs[0].bold is not True
+        assert runs[0].font.color.rgb is None
+
+    @pytest.mark.unit
+    def test_multiple_keywords_in_one_line(self):
+        """Test that multiple BUY/SELL keywords are each colored."""
+        from docx import Document
+        from docx.shared import RGBColor
+        from app import _add_colored_run
+
+        doc = Document()
+        para = doc.add_paragraph()
+        _add_colored_run(para, "Short-term BUY but long-term SELL")
+
+        runs = para.runs
+        buy_runs = [r for r in runs if r.text.strip() == "BUY"]
+        sell_runs = [r for r in runs if r.text.strip() == "SELL"]
+        assert len(buy_runs) == 1
+        assert len(sell_runs) == 1
+        assert buy_runs[0].font.color.rgb == RGBColor(0, 128, 0)
+        assert sell_runs[0].font.color.rgb == RGBColor(200, 0, 0)
