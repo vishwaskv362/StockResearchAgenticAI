@@ -40,6 +40,9 @@ env/
 .env.local
 .env.*.local
 
+# Streamlit secrets (never commit)
+.streamlit/secrets.toml
+
 # Data
 data/cache/*
 data/reports/*
