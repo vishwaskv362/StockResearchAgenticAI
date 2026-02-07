@@ -238,12 +238,19 @@ class TestEnsureDirs:
 
     @pytest.mark.unit
     def test_admin_ids_invalid_value(self):
-        """Test that non-numeric admin IDs raise ValueError."""
+        """Test that non-numeric admin IDs are silently skipped."""
         from config import Settings
 
         s = Settings(telegram_admin_ids="abc,def", _env_file=None)
-        with pytest.raises(ValueError):
-            _ = s.admin_ids
+        assert s.admin_ids == []
+
+    @pytest.mark.unit
+    def test_admin_ids_mixed_valid_invalid(self):
+        """Test that valid IDs are kept and invalid ones skipped."""
+        from config import Settings
+
+        s = Settings(telegram_admin_ids="123,abc,456", _env_file=None)
+        assert s.admin_ids == [123, 456]
 
 
 class TestReportConfig:

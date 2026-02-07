@@ -21,7 +21,7 @@ def create_news_analyst_agent() -> Agent:
     llm = LLM(
         model=settings.llm_model,
         api_key=settings.mistral_api_key,
-        temperature=0.5,
+        temperature=0.4,
     )
 
     return Agent(

@@ -112,7 +112,9 @@ def get_fii_dii_data() -> str:
     except Exception as e:
         return json.dumps({
             "error": str(e),
-            "suggestion": "Check https://www.nseindia.com/reports/fii-dii directly for FII/DII data",
+            "DATA_UNAVAILABLE": True,
+            "message": "FAILED to fetch FII/DII data. Do NOT guess institutional flow numbers.",
+            "suggestion": "Check https://www.nseindia.com/reports/fii-dii directly",
             "fetched_at": datetime.now().isoformat(),
         }, indent=2)
 
@@ -120,91 +122,63 @@ def get_fii_dii_data() -> str:
 @tool("Get Bulk Block Deals")
 def get_bulk_block_deals(symbol: str = None) -> str:
     """
-    Get recent bulk and block deals from NSE/BSE.
+    Get recent bulk and block deals from NSE India.
     Bulk deals are large transactions (> 0.5% of equity) that must be disclosed.
     Block deals are large trades done through a separate trading window.
-    
+
     Args:
         symbol: Optional stock symbol to filter deals. If None, returns all recent deals.
-        
+
     Returns:
         JSON string with bulk and block deal information.
     """
     try:
-        # Try to scrape bulk deals data
-        url = "https://www.moneycontrol.com/stocks/marketstats/bulk-deals/"
-        
+        client = _get_nse_session()
         deals = []
-        
-        with httpx.Client(headers=HEADERS, timeout=30.0, follow_redirects=True) as client:
-            response = client.get(url)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'lxml')
-                
-                # Find deal tables
-                tables = soup.find_all('table')
-                
-                for table in tables:
-                    rows = table.find_all('tr')[1:]  # Skip header
-                    
-                    for row in rows[:20]:  # Limit to 20 deals
-                        cells = row.find_all(['td', 'th'])
-                        if len(cells) >= 4:
-                            deal = {
-                                "stock": cells[0].get_text().strip(),
-                                "client": cells[1].get_text().strip() if len(cells) > 1 else "N/A",
-                                "deal_type": cells[2].get_text().strip() if len(cells) > 2 else "N/A",
-                                "quantity": cells[3].get_text().strip() if len(cells) > 3 else "N/A",
-                                "price": cells[4].get_text().strip() if len(cells) > 4 else "N/A",
-                            }
-                            
-                            # Filter by symbol if provided
-                            if symbol:
-                                if symbol.upper() in deal["stock"].upper():
-                                    deals.append(deal)
-                            else:
-                                deals.append(deal)
-        
-        if not deals:
-            # Provide helpful information even if scraping fails
-            deals = [{
-                "note": "No deals found or unable to fetch live data",
-                "what_to_look_for": [
-                    "Large investors (FIIs, DIIs, HNIs) buying/selling",
-                    "Promoter transactions",
-                    "Private equity exits",
-                    "Strategic investments",
-                ],
-                "significance": [
-                    "Bulk deals indicate strong institutional interest",
-                    "Multiple buy deals = bullish signal",
-                    "Promoter buying = positive sign",
-                    "Large selling by promoters = red flag",
-                ],
-            }]
-        
+
+        try:
+            # NSE bulk deals API
+            response = client.get("https://www.nseindia.com/api/snapshot-capital-market-largedeal")
+        finally:
+            client.close()
+
+        if response.status_code == 200:
+            api_data = response.json()
+            # API returns {"BLOCK_DEALS_DATA": [...], "BULK_DEALS_DATA": [...]}
+            for deal_type_key in ["BLOCK_DEALS_DATA", "BULK_DEALS_DATA"]:
+                for entry in api_data.get(deal_type_key, []):
+                    deal = {
+                        "stock": entry.get("symbol", "N/A"),
+                        "client": entry.get("clientName", "N/A"),
+                        "deal_type": "Block" if "BLOCK" in deal_type_key else "Bulk",
+                        "buy_sell": entry.get("buySell", "N/A"),
+                        "quantity": entry.get("quantityTraded", "N/A"),
+                        "price": entry.get("tradedPrice", "N/A"),
+                    }
+
+                    if symbol:
+                        if symbol.upper() in deal["stock"].upper():
+                            deals.append(deal)
+                    else:
+                        deals.append(deal)
+
         return json.dumps({
             "filter_symbol": symbol or "All Stocks",
             "deals_count": len(deals),
-            "deals": deals[:15],  # Return max 15 deals
-            "interpretation": {
-                "bulk_deal": "Transaction > 0.5% of company's equity, must be disclosed same day",
-                "block_deal": "Minimum 5 Lakh shares or Rs 10 Cr transaction, done in special window",
-                "significance": "Large institutional transactions indicate strong conviction",
-            },
-            "where_to_check": [
-                "https://www.nseindia.com/market-data/bulk-deals",
-                "https://www.bseindia.com/markets/equity/EQReports/BulknBlockDeals.aspx",
-            ],
+            "deals": deals[:15],
+            "note": "No bulk/block deals found for this symbol today." if not deals else "",
+            "source": "NSE India",
             "fetched_at": datetime.now().isoformat(),
         }, indent=2)
-    
+
     except Exception as e:
         return json.dumps({
             "error": str(e),
             "symbol": symbol,
-            "suggestion": "Check NSE/BSE websites for latest bulk/block deal data",
+            "deals_count": 0,
+            "deals": [],
+            "DATA_UNAVAILABLE": True,
+            "message": "FAILED to fetch bulk/block deals. Do NOT fabricate deal data.",
         }, indent=2)
 
 
@@ -277,7 +251,8 @@ def get_promoter_holdings(symbol: str) -> str:
         return json.dumps({
             "error": str(e),
             "symbol": symbol,
-            "suggestion": "Check Screener.in or company's BSE/NSE page for shareholding pattern",
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to fetch promoter holdings for {symbol}. Do NOT guess shareholding data.",
         }, indent=2)
 
 
@@ -337,5 +312,6 @@ def get_mutual_fund_holdings(symbol: str) -> str:
         return json.dumps({
             "error": str(e),
             "symbol": symbol,
-            "suggestion": "Check Screener.in or AMFI website for mutual fund holdings",
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to fetch MF holdings for {symbol}. Do NOT guess holding data.",
         }, indent=2)

@@ -811,9 +811,10 @@ class TestCallbackEdgeCases:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_callback_analyze_prefix(self, bot_instance, mock_update, mock_context):
-        """Test analyze_ callback prefix (lines 690-691)."""
+        """Test analyze_ callback prefix dispatches to analyze_command."""
         mock_update.callback_query.data = "analyze_INFY"
-        await bot_instance.handle_callback(mock_update, mock_context)
+        with patch("bot.telegram_bot.analyze_stock_sync", return_value="## INFY Report\nTest report"):
+            await bot_instance.handle_callback(mock_update, mock_context)
         mock_update.callback_query.message.reply_text.assert_called()
         call_str = str(mock_update.callback_query.message.reply_text.call_args)
         assert "INFY" in call_str

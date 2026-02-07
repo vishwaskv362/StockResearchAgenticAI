@@ -2,6 +2,7 @@
 Streamlit Web UI for Stock Research Assistant
 Beautiful dashboard for Indian stock market analysis
 """
+import html as html_module
 import streamlit as st
 import json
 from datetime import datetime
@@ -10,7 +11,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 
 # Must be first Streamlit command
-st.set_page_config(  # pragma: no cover
+st.set_page_config(
     page_title="Stock Research Assistant 🇮🇳",
     page_icon="📊",
     layout="wide",
@@ -26,7 +27,7 @@ from config import NIFTY50_STOCKS, SECTORS
 
 
 # Custom CSS
-st.markdown("""  # pragma: no cover
+st.markdown("""
 <style>
     .main-header {
         font-size: 2.5rem;
@@ -95,7 +96,7 @@ def get_trend_emoji(change):
 
 def _safe_val(value, prefix="", suffix=""):
     """Safely format a value for reports, handling None and N/A."""
-    if value is None or value == "N/A" or value == 0:
+    if value is None or value == "N/A":
         return "N/A"
     return f"{prefix}{value}{suffix}"
 
@@ -539,8 +540,8 @@ def render_stock_overview(symbol: str):
         st.markdown(
             f"""
             <div style="margin-bottom:0.5rem;">
-              <span style="font-size:1.1rem; color:#aaa;">{company_name}</span>
-              <span style="font-size:0.85rem; color:#888; margin-left:8px;">{info_data.get('sector', '')} · {info_data.get('industry', '')}</span>
+              <span style="font-size:1.1rem; color:#aaa;">{html_module.escape(str(company_name))}</span>
+              <span style="font-size:0.85rem; color:#888; margin-left:8px;">{html_module.escape(str(info_data.get('sector', '')))} · {html_module.escape(str(info_data.get('industry', '')))}</span>
             </div>
             <div style="display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;">
               <span style="font-size:2.4rem; font-weight:700;">₹{price_data.get('current_price', 0):,.2f}</span>
@@ -1705,7 +1706,7 @@ def main():
         - 📊 Real-time price data from NSE/BSE
         - 📈 Technical indicators (RSI, MACD, Bollinger Bands)
         - 💰 Fundamental metrics (P/E, ROE, Debt analysis)
-        - 📰 News from Moneycontrol, Economic Times, Business Standard
+        - 📰 News from Economic Times, Google News
         - 🏦 FII/DII activity tracking
         - 🤖 Full AI-powered research reports
         """)
@@ -1728,7 +1729,7 @@ def main():
                         f"{change:+.2f}%"
                     )
                 except Exception:
-                    st.metric(stock, "Loading...")
+                    st.metric(stock, "—", help="Price data temporarily unavailable")
 
 
 if __name__ == "__main__":  # pragma: no cover

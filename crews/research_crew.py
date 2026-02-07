@@ -59,19 +59,25 @@ def create_stock_research_crew(symbol: str, analysis_type: str = "full") -> Crew
     # ==========================================
     market_data_task = Task(
         description=f"""Collect comprehensive market data for {symbol}:
-        
+
         1. Get the current stock price, volume, and today's trading range
         2. Fetch company information (sector, industry, market cap)
         3. Get historical data for the past 1 year
         4. Check the major index levels (NIFTY50, SENSEX)
         5. Get NSE-specific data if available (delivery percentage)
-        
+
         Compile all data into a structured format that other analysts can use.
-        Highlight any unusual activity (volume spikes, price gaps, etc.)""",
+        Highlight any unusual activity (volume spikes, price gaps, etc.)
+
+        IMPORTANT: Report the exact numbers returned by each tool call.
+        If a tool returns an error, state "data unavailable" for that section.
+        Do not estimate or guess any data points.""",
         expected_output=f"""A comprehensive market data report for {symbol} including:
-        - Current price and day's trading range
+        - Current price (exact value from Get Stock Price tool)
+        - Day's trading range (open, high, low from tool output)
         - Volume compared to average
         - Key company metrics (market cap, sector, etc.)
+        - 52-week high and low from tool output
         - Historical performance summary
         - Any notable observations""",
         agent=market_data_agent,
@@ -203,14 +209,19 @@ def create_stock_research_crew(symbol: str, analysis_type: str = "full") -> Crew
     report_task = Task(
         description=f"""Create a comprehensive, well-structured research report for {symbol}:
 
-        Compile all findings from:
+        STEP 1 - VERIFY DATA (MANDATORY):
+        Before writing anything, call "Get Stock Price" for {symbol} to get the
+        verified current price. This is your ground truth. Every price mention
+        in the report must be consistent with this verified price.
+
+        STEP 2 - Compile all findings from the other agents:
         - Market Data Analysis
         - News & Sentiment Analysis
         - Fundamental Analysis
         - Technical Analysis
         - Investment Strategy
 
-        Structure the report with these sections:
+        STEP 3 - Structure the report with these sections:
         1. **Executive Summary** - Key takeaways in 3-4 bullet points
         2. **Company Snapshot** - Brief overview with sector and market cap
         3. **Fundamental Highlights** - Key metrics and assessment
@@ -226,12 +237,17 @@ def create_stock_research_crew(symbol: str, analysis_type: str = "full") -> Crew
         - Include specific price levels for entry, target, and stop-loss
         - Use Indian number format (lakhs, crores) for large values
 
-        IMPORTANT: Only include data and metrics that were provided by the
-        other analysts. Do not introduce new statistics or price targets
-        beyond what the analysis contains.
+        DATA INTEGRITY RULES (NON-NEGOTIABLE):
+        1. The current price MUST match the "Get Stock Price" tool output exactly.
+        2. Support/resistance levels must come from technical analysis tool data.
+        3. Do NOT invent AUM, expense ratio, or other metrics not in the data.
+        4. If a data point is unavailable, write "Data not available".
+        5. Do not introduce new statistics or price targets beyond what the
+           analysis contains.
 
         End with a clear action statement and a standard investment disclaimer.""",
         expected_output=f"""A professional research report for {symbol} with:
+        - Current price verified against Get Stock Price tool output
         - Clear markdown structure with section headings
         - Executive summary at the top
         - All key analysis points from previous agents covered

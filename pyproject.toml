@@ -52,6 +52,17 @@ target-version = "py311"
 line-length = 100
 target-version = ["py311"]
 
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", ".venv/*"]
+
+[tool.coverage.report]
+omit = ["tests/*", ".venv/*"]
+exclude_lines = [
+    "if __name__",
+    "pragma: no cover",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

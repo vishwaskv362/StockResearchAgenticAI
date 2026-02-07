@@ -13,6 +13,22 @@ from crewai.tools import tool
 from config import TECHNICAL_CONFIG, FUNDAMENTAL_THRESHOLDS
 
 
+def _safe_json_dumps(data: dict, **kwargs) -> str:
+    """JSON serialize with NaN/Infinity replaced by None."""
+    import math
+
+    def _sanitize(obj):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        return obj
+
+    return json.dumps(_sanitize(data), **kwargs)
+
+
 def _get_nse_symbol(symbol: str) -> str:
     """Convert symbol to NSE Yahoo Finance format."""
     symbol = symbol.upper().strip()
@@ -39,7 +55,11 @@ def calculate_technical_indicators(symbol: str, period: str = "6mo") -> str:
         df = ticker.history(period=period)
         
         if df.empty or len(df) < 50:
-            return json.dumps({"error": f"Insufficient data for {symbol}"})
+            return json.dumps({
+                "error": f"Insufficient data for {symbol} (need 50+ trading days, got {len(df) if not df.empty else 0})",
+                "DATA_UNAVAILABLE": True,
+                "message": f"Cannot compute technical indicators for {symbol}. Do NOT guess indicator values.",
+            })
         
         close = df['Close']
         high = df['High']
@@ -82,7 +102,8 @@ def calculate_technical_indicators(symbol: str, period: str = "6mo") -> str:
         bb_lower = bb_middle - (bb_std * 2)
         
         current_price = close.iloc[-1]
-        bb_position = (current_price - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
+        bb_width = bb_upper.iloc[-1] - bb_lower.iloc[-1]
+        bb_position = (current_price - bb_lower.iloc[-1]) / bb_width if bb_width != 0 else 0.5
         
         # ==========================================
         # ATR (Average True Range)
@@ -111,10 +132,10 @@ def calculate_technical_indicators(symbol: str, period: str = "6mo") -> str:
         # ==========================================
         # Support & Resistance Levels (Standard Daily Pivots)
         # ==========================================
-        # Use previous day's H/L/C for standard pivot points
-        prev_high = high.iloc[-1]
-        prev_low = low.iloc[-1]
-        prev_close = close.iloc[-1]
+        # Use the PREVIOUS completed day's H/L/C for standard pivot points
+        prev_high = high.iloc[-2] if len(high) > 1 else high.iloc[-1]
+        prev_low = low.iloc[-2] if len(low) > 1 else low.iloc[-1]
+        prev_close = close.iloc[-2] if len(close) > 1 else close.iloc[-1]
         pivot = (prev_high + prev_low + prev_close) / 3
         r1 = 2 * pivot - prev_low
         s1 = 2 * pivot - prev_high
@@ -246,10 +267,15 @@ def calculate_technical_indicators(symbol: str, period: str = "6mo") -> str:
             "signal_strength": f"{max(bullish_signals, bearish_signals)}/{len(signals)}",
         }
         
-        return json.dumps(result, indent=2)
+        return _safe_json_dumps(result, indent=2)
     
     except Exception as e:
-        return json.dumps({"error": str(e), "symbol": symbol})
+        return json.dumps({
+            "error": str(e),
+            "symbol": symbol,
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to calculate indicators for {symbol}. Do NOT guess technical levels.",
+        })
 
 
 @tool("Get Fundamental Metrics")
@@ -442,7 +468,7 @@ def get_fundamental_metrics(symbol: str) -> str:
                 "debt_to_equity": format_value(debt_equity),
                 "current_ratio": format_value(current_ratio),
                 "quick_ratio": format_value(quick_ratio),
-                "debt_status": "Low" if debt_equity and debt_equity < 100 else ("Moderate" if debt_equity and debt_equity < 200 else "High"),
+                "debt_status": "Low" if debt_equity and debt_equity < 50 else ("Moderate" if debt_equity and debt_equity <= 150 else ("High" if debt_equity else "N/A")),
             },
             
             "per_share": {
@@ -476,10 +502,15 @@ def get_fundamental_metrics(symbol: str) -> str:
             "rating_percentage": f"{rating_pct:.0f}%",
         }
         
-        return json.dumps(result, indent=2)
+        return _safe_json_dumps(result, indent=2)
     
     except Exception as e:
-        return json.dumps({"error": str(e), "symbol": symbol})
+        return json.dumps({
+            "error": str(e),
+            "symbol": symbol,
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to get fundamental metrics for {symbol}. Do NOT guess financial ratios.",
+        })
 
 
 @tool("Analyze Price Action")
@@ -498,7 +529,11 @@ def analyze_price_action(symbol: str) -> str:
         df = ticker.history(period="3mo")
         
         if df.empty:
-            return json.dumps({"error": f"No data for {symbol}"})
+            return json.dumps({
+                "error": f"No data for {symbol}",
+                "DATA_UNAVAILABLE": True,
+                "message": f"No price data returned for {symbol}. Do NOT guess price levels.",
+            })
         
         close = df['Close']
         high = df['High']
@@ -569,7 +604,12 @@ def analyze_price_action(symbol: str) -> str:
             "analysis_date": datetime.now().isoformat(),
         }
         
-        return json.dumps(result, indent=2)
-    
+        return _safe_json_dumps(result, indent=2)
+
     except Exception as e:
-        return json.dumps({"error": str(e), "symbol": symbol})
+        return json.dumps({
+            "error": str(e),
+            "symbol": symbol,
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to analyze price action for {symbol}. Do NOT guess price levels.",
+        })

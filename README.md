@@ -88,7 +88,7 @@ uv run python run_analysis.py RELIANCE --quick
 
 ### 🏦 Institutional Tracking
 - FII/DII activity (live data from NSE India API)
-- Bulk/Block deals
+- Bulk/Block deals (NSE large deal snapshots)
 - Promoter holdings
 - Mutual fund activity
 
@@ -271,6 +271,21 @@ stock-research-assistant/
 │   ├── __init__.py
 │   └── telegram_bot.py         # Bot implementation
 │
+├── tests/                      # Test suite (414 tests, 95% coverage)
+│   ├── conftest.py             # Shared fixtures and mocks
+│   ├── test_agents.py          # Agent configuration tests
+│   ├── test_analysis.py        # Technical indicator tests
+│   ├── test_app.py             # Streamlit dashboard tests
+│   ├── test_cli.py             # CLI entry point tests
+│   ├── test_config.py          # Configuration validation
+│   ├── test_crews.py           # Crew orchestration tests
+│   ├── test_fundamental.py     # Fundamental analysis tests
+│   ├── test_institutional.py   # FII/DII and deals tests
+│   ├── test_integration.py     # End-to-end pipeline tests
+│   ├── test_market_data.py     # Market data tool tests
+│   ├── test_news_scraper.py    # News scraping tests
+│   └── test_telegram_bot.py    # Telegram bot tests
+│
 ├── data/                       # Data storage
 │   ├── cache/
 │   └── reports/
@@ -282,6 +297,7 @@ stock-research-assistant/
 ├── run_analysis.py             # CLI analysis tool
 ├── .env.example                # Environment template
 ├── SETUP.md                    # Setup instructions
+├── TESTING.md                  # Testing guide
 └── README.md
 ```
 
@@ -326,6 +342,18 @@ Entry: ₹2,820-2,860
 Stop Loss: ₹2,700
 Target 1: ₹3,000
 Target 2: ₹3,150
+```
+
+## 🧪 Testing
+
+414 tests with **95% code coverage**. See [TESTING.md](TESTING.md) for full details.
+
+```bash
+# Run all unit tests
+uv run pytest -m unit -v
+
+# Run with coverage
+uv run pytest --cov=. --cov-report=html tests/
 ```
 
 ## 🛠️ Development

@@ -336,26 +336,30 @@ class TestBulkBlockDeals:
 
     @pytest.mark.unit
     def test_bulk_deals_returns_json(self):
-        """Test that bulk deals returns valid JSON."""
+        """Test that bulk deals returns valid JSON via NSE API."""
         from tools.institutional import get_bulk_block_deals
 
-        with patch('httpx.Client') as mock_client:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.text = """
-            <html><body>
-            <table>
-                <tr><td>Client</td><td>Buy/Sell</td><td>Quantity</td><td>Price</td></tr>
-                <tr><td>ABC Capital</td><td>Buy</td><td>100000</td><td>2450</td></tr>
-            </table>
-            </body></html>
-            """
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+        api_response = {
+            "BLOCK_DEALS_DATA": [],
+            "BULK_DEALS_DATA": [
+                {"symbol": "RELIANCE", "clientName": "ABC Capital", "buySell": "BUY", "quantityTraded": 100000, "tradedPrice": 2450},
+            ],
+        }
 
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = api_response
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_response
+
+        with patch("tools.institutional._get_nse_session", return_value=mock_client):
             result = get_bulk_block_deals.func("RELIANCE")
             data = json.loads(result)
 
             assert isinstance(data, dict)
+            assert data["deals_count"] >= 1
+            assert data["deals"][0]["stock"] == "RELIANCE"
 
     @pytest.mark.unit
     @pytest.mark.critical
@@ -483,68 +487,66 @@ class TestBulkBlockDeals:
         """Test that symbol filter returns only matching deals."""
         from tools.institutional import get_bulk_block_deals
 
-        html = """<html><body><table>
-        <tr><th>Stock</th><th>Client</th><th>Type</th><th>Qty</th><th>Price</th></tr>
-        <tr><td>RELIANCE IND</td><td>Big Fund</td><td>Buy</td><td>100000</td><td>2500</td></tr>
-        <tr><td>TCS LTD</td><td>Other Fund</td><td>Sell</td><td>50000</td><td>3500</td></tr>
-        </table></body></html>"""
+        api_response = {
+            "BLOCK_DEALS_DATA": [],
+            "BULK_DEALS_DATA": [
+                {"symbol": "RELIANCE", "clientName": "Big Fund", "buySell": "BUY", "quantityTraded": 100000, "tradedPrice": 2500},
+                {"symbol": "TCS", "clientName": "Other Fund", "buySell": "SELL", "quantityTraded": 50000, "tradedPrice": 3500},
+            ],
+        }
 
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = html
+        mock_response.json.return_value = api_response
 
-        with patch("httpx.Client") as mock_client:
-            mock_client.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
-            mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_response
 
+        with patch("tools.institutional._get_nse_session", return_value=mock_client):
             result = get_bulk_block_deals.func("RELIANCE")
             data = json.loads(result)
 
         # Should only include RELIANCE deals
-        actual_deals = [d for d in data["deals"] if "stock" in d]
-        for deal in actual_deals:
+        for deal in data["deals"]:
             assert "RELIANCE" in deal["stock"].upper()
 
     @pytest.mark.unit
-    def test_bulk_deals_empty_table(self):
-        """Test handling of HTML with no table."""
+    def test_bulk_deals_empty_response(self):
+        """Test handling of empty API response."""
         from tools.institutional import get_bulk_block_deals
 
-        html = "<html><body><p>No data available</p></body></html>"
+        api_response = {"BLOCK_DEALS_DATA": [], "BULK_DEALS_DATA": []}
 
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = html
+        mock_response.json.return_value = api_response
 
-        with patch("httpx.Client") as mock_client:
-            mock_client.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
-            mock_client.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_response
 
+        with patch("tools.institutional._get_nse_session", return_value=mock_client):
             result = get_bulk_block_deals.func()
             data = json.loads(result)
 
         assert isinstance(data, dict)
         assert "deals" in data
-        # When no real deals found, should have the "note" fallback
-        assert data["deals"][0].get("note") is not None or len(data["deals"]) >= 0
+        assert data["deals_count"] == 0
+        assert len(data["deals"]) == 0
+        # Should NOT contain hallucination-inducing fallback text
+        assert "what_to_look_for" not in str(data)
 
     @pytest.mark.unit
     def test_bulk_deals_network_error(self):
-        """Test that network errors return error JSON."""
+        """Test that network errors return error JSON with DATA_UNAVAILABLE."""
         from tools.institutional import get_bulk_block_deals
 
-        with patch("httpx.Client") as mock_client:
-            mock_client.return_value.__enter__ = MagicMock(
-                side_effect=ConnectionError("Network error")
-            )
-            mock_client.return_value.__exit__ = MagicMock(return_value=False)
-
+        with patch("tools.institutional._get_nse_session",
+                   side_effect=ConnectionError("Network error")):
             result = get_bulk_block_deals.func("RELIANCE")
             data = json.loads(result)
 
         assert "error" in data
+        assert data.get("DATA_UNAVAILABLE") is True
 
     @pytest.mark.unit
     def test_nse_session_close_error(self):

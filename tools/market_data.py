@@ -79,7 +79,11 @@ def get_stock_price(symbol: str) -> str:
         hist = ticker.history(period="2d")
         
         if hist.empty:
-            return json.dumps({"error": f"No data found for {symbol}"})
+            return json.dumps({
+                "error": f"No data found for {symbol}",
+                "DATA_UNAVAILABLE": True,
+                "message": f"No price data returned for {symbol}. The symbol may be invalid. Do NOT guess the price.",
+            })
         
         current_price = hist['Close'].iloc[-1]
         prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
@@ -108,7 +112,12 @@ def get_stock_price(symbol: str) -> str:
         return json.dumps(data, indent=2)
 
     except Exception as e:
-        return json.dumps({"error": str(e), "symbol": symbol})
+        return json.dumps({
+            "error": str(e),
+            "symbol": symbol,
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to fetch price for {symbol}. Do NOT guess the price.",
+        })
 
 
 @tool("Get Stock Info")
@@ -160,7 +169,12 @@ def get_stock_info(symbol: str) -> str:
         return json.dumps(data, indent=2)
 
     except Exception as e:
-        return json.dumps({"error": str(e), "symbol": symbol})
+        return json.dumps({
+            "error": str(e),
+            "symbol": symbol,
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to fetch info for {symbol}. Do NOT guess company details.",
+        })
 
 
 @tool("Get Historical Data")
@@ -184,7 +198,11 @@ def get_historical_data(symbol: str, period: str = "1y") -> str:
         hist = ticker.history(period=period)
         
         if hist.empty:
-            return json.dumps({"error": f"No historical data for {symbol}"})
+            return json.dumps({
+                "error": f"No historical data for {symbol}",
+                "DATA_UNAVAILABLE": True,
+                "message": f"No historical data returned for {symbol}. Do NOT guess historical prices.",
+            })
         
         # Calculate returns
         returns = hist['Close'].pct_change().dropna()
@@ -224,7 +242,12 @@ def get_historical_data(symbol: str, period: str = "1y") -> str:
         return json.dumps(data, indent=2)
     
     except Exception as e:
-        return json.dumps({"error": str(e), "symbol": symbol})
+        return json.dumps({
+            "error": str(e),
+            "symbol": symbol,
+            "DATA_UNAVAILABLE": True,
+            "message": f"FAILED to fetch historical data for {symbol}. Do NOT guess prices.",
+        })
 
 
 @tool("Get Index Data")

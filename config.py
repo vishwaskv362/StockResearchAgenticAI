@@ -53,7 +53,12 @@ class Settings(BaseSettings):
         """Parse admin IDs from comma-separated string."""
         if not self.telegram_admin_ids:
             return []
-        return [int(id.strip()) for id in self.telegram_admin_ids.split(",") if id.strip()]
+        ids = []
+        for item in self.telegram_admin_ids.split(","):
+            item = item.strip()
+            if item.isdigit():
+                ids.append(int(item))
+        return ids
     
     def ensure_dirs(self):
         """Create necessary directories if they don't exist."""

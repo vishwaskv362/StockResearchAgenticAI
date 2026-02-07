@@ -53,16 +53,19 @@ uv run pytest -n auto tests/
 
 ```
 tests/
-├── conftest.py           # Shared fixtures and mocks
-├── test_config.py        # Configuration validation
-├── test_market_data.py   # Stock price, info, historical data
-├── test_analysis.py      # Technical indicators (RSI, MACD, BB)
-├── test_news_scraper.py  # News scraping and aggregation
-├── test_institutional.py # FII/DII, promoter holdings
-├── test_fundamental.py   # Fundamental ratios (PE, ROE)
-├── test_agents.py        # CrewAI agent configuration
-├── test_crews.py         # Research crew workflows
-└── test_integration.py   # End-to-end pipelines
+├── conftest.py             # Shared fixtures and mocks
+├── test_config.py          # Configuration validation
+├── test_market_data.py     # Stock price, info, historical data
+├── test_analysis.py        # Technical indicators (RSI, MACD, BB)
+├── test_news_scraper.py    # News scraping and aggregation
+├── test_institutional.py   # FII/DII, bulk/block deals, promoter holdings
+├── test_fundamental.py     # Fundamental ratios (PE, ROE)
+├── test_agents.py          # CrewAI agent configuration
+├── test_crews.py           # Research crew workflows
+├── test_app.py             # Streamlit dashboard and UI helpers
+├── test_cli.py             # CLI entry point (run_analysis, run_bot)
+├── test_telegram_bot.py    # Telegram bot commands and callbacks
+└── test_integration.py     # End-to-end pipelines
 ```
 
 ## Testing Strategy
@@ -98,13 +101,22 @@ tests/
 | `mock_httpx_response` | Mocked HTTP response for scraping tests |
 | `sample_et_rss_xml` | Sample ET RSS XML for news tests |
 | `sample_historical_data` | Realistic OHLCV DataFrame |
+| `mock_nse_session` | Mocked NSE session for institutional data |
 
-## Coverage Goals
+## Coverage
 
-- **Target: 100%** for core financial modules
-- `tools/` - Must have complete coverage
-- `agents/` - Configuration and creation tested
-- `crews/` - Workflow definitions tested
+Current: **414 tests, 95% overall coverage**.
+
+| Module | Coverage |
+|--------|----------|
+| `agents/` | 100% |
+| `bot/telegram_bot.py` | 100% |
+| `config.py` | 100% |
+| `crews/` | 100% |
+| `run_analysis.py` | 100% |
+| `run_bot.py` | 100% |
+| `tools/` | 84-90% |
+| `app.py` | 84% |
 
 ## CI/CD Integration
 

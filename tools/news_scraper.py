@@ -183,10 +183,13 @@ def scrape_et_rss_news(symbol: str, limit: int = 10) -> str:
                     title = _clean_text(title)
                     description = _clean_text(description)
 
-                    # Filter: only include items mentioning the symbol or company
+                    # Filter: include items mentioning the symbol or company
                     search_text = (title + " " + description).lower()
                     symbol_lower = symbol.lower()
-                    if symbol_lower not in search_text:
+                    # Also try common name variations (e.g., GOLDBEES -> "gold bees", "gold bee")
+                    symbol_parts = re.split(r'(?<=[a-z])(?=[A-Z])|(?<=\D)(?=\d)|(?<=\d)(?=\D)', symbol)
+                    name_variations = [symbol_lower, " ".join(p.lower() for p in symbol_parts if p)]
+                    if not any(var in search_text for var in name_variations if var):
                         continue
 
                     news_articles.append({

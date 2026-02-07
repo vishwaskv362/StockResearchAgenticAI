@@ -122,7 +122,7 @@ class TestSafeVal:
 
     @pytest.mark.unit
     def test_with_zero(self, app_module):
-        assert app_module._safe_val(0) == "N/A"
+        assert app_module._safe_val(0) == "0"
 
     @pytest.mark.unit
     def test_with_na_string(self, app_module):

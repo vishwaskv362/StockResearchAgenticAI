@@ -14,6 +14,7 @@ from tools.news_scraper import (
     scrape_economic_times_news,
     scrape_google_news,
     get_stock_news,
+    get_market_news_headlines,
 )
 from tools.analysis import (
     calculate_technical_indicators,
@@ -23,6 +24,8 @@ from tools.analysis import (
 from tools.institutional import (
     get_fii_dii_data,
     get_bulk_block_deals,
+    get_promoter_holdings,
+    get_mutual_fund_holdings,
 )
 
 __all__ = [
@@ -40,4 +43,7 @@ __all__ = [
     "analyze_price_action",
     "get_fii_dii_data",
     "get_bulk_block_deals",
+    "get_market_news_headlines",
+    "get_promoter_holdings",
+    "get_mutual_fund_holdings",
 ]

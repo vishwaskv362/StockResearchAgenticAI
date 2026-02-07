@@ -7,7 +7,7 @@ from crewai import Agent, LLM
 
 from config import settings
 from tools.institutional import get_fii_dii_data, get_bulk_block_deals
-from tools.market_data import get_index_data
+from tools.market_data import get_index_data, get_stock_price
 
 
 def create_investment_strategist_agent() -> Agent:
@@ -16,7 +16,7 @@ def create_investment_strategist_agent() -> Agent:
     llm = LLM(
         model=settings.llm_model,
         api_key=settings.mistral_api_key,
-        temperature=0.6,
+        temperature=0.4,
     )
     
     return Agent(
@@ -52,13 +52,20 @@ def create_investment_strategist_agent() -> Agent:
         You present a balanced view, acknowledging both bull and bear cases,
         and clearly state your conviction level (High/Medium/Low).
 
-        IMPORTANT: Base your recommendation on the data provided by the
-        other analysts and your own tools. Do not fabricate price targets,
-        earnings estimates, or statistics not present in the analysis.""",
+        CRITICAL DATA ACCURACY RULES:
+        1. Use "Get Stock Price" to verify the current price before making
+           any price-based recommendations.
+        2. Base entry, stop-loss, and target prices on the support/resistance
+           levels from the technical analysis. Do not invent price levels.
+        3. Do not fabricate price targets, earnings estimates, or statistics
+           not present in the analysis from other agents.
+        4. If you lack data for a recommendation dimension, state that data
+           is unavailable rather than estimating.""",
         tools=[
             get_fii_dii_data,
             get_bulk_block_deals,
             get_index_data,
+            get_stock_price,
         ],
         llm=llm,
         verbose=True,

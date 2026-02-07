@@ -170,34 +170,35 @@ NIFTY 50, NIFTY Next 50, NIFTY 500, and more.
     
     async def analyze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /analyze command - Full AI analysis."""
+        reply_target = self._get_reply_message(update)
         if not context.args:
-            await update.message.reply_text(
+            await reply_target.reply_text(
                 "❌ Please provide a stock symbol.\n\n"
                 "Example: `/analyze RELIANCE`",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
-        
+
         symbol = context.args[0].upper().strip()
         user_id = update.effective_user.id
-        
+
         # Rate limiting
         now = datetime.now().timestamp()
         if user_id in user_last_request:
             time_since = now - user_last_request[user_id]
             if time_since < REQUEST_COOLDOWN:
                 remaining = int(REQUEST_COOLDOWN - time_since)
-                await update.message.reply_text(
+                await reply_target.reply_text(
                     f"⏳ Please wait {remaining} seconds before requesting another full analysis.\n\n"
                     f"Use `/quick {symbol}` for instant results!",
                     parse_mode=ParseMode.MARKDOWN,
                 )
                 return
-        
+
         user_last_request[user_id] = now
-        
+
         # Send initial message
-        status_msg = await update.message.reply_text(
+        status_msg = await reply_target.reply_text(
             f"🔬 **Analyzing {symbol}...**\n\n"
             "⏳ This comprehensive analysis may take 2-3 minutes.\n\n"
             "Our AI agents are working on:\n"
@@ -688,11 +689,8 @@ _Analysis as of {datetime.now().strftime('%H:%M:%S IST')}_
         # Handle stock-specific callbacks
         elif data.startswith("analyze_"):
             symbol = data.replace("analyze_", "")
-            await message.reply_text(
-                f"Starting full analysis for **{symbol}**...\n"
-                f"Use `/analyze {symbol}` to begin.",
-                parse_mode=ParseMode.MARKDOWN,
-            )
+            context.args = [symbol]
+            await self.analyze_command(update, context)
         elif data.startswith("technical_"):
             symbol = data.replace("technical_", "")
             context.args = [symbol]
