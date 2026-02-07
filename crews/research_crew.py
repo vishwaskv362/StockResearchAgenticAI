@@ -7,6 +7,32 @@ from datetime import datetime
 from typing import Optional
 from crewai import Crew, Task, Process
 
+# ---------------------------------------------------------------------------
+# Patch: Mistral API returns content as list of blocks (text, reference)
+# instead of a plain string. LiteLLM 1.75.x can't parse this.
+# Flatten list-format content to a string before LiteLLM's pydantic model
+# tries to validate it. See: https://github.com/BerriAI/litellm/issues/13416
+# ---------------------------------------------------------------------------
+import litellm.litellm_core_utils.llm_response_utils.convert_dict_to_response as _llm_resp
+
+_original_extract = _llm_resp._extract_reasoning_content
+
+
+def _patched_extract_reasoning_content(message: dict):
+    reasoning, content = _original_extract(message)
+    if isinstance(content, list):
+        # Flatten list of content blocks to a single string
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        content = "".join(parts) if parts else None
+    return reasoning, content
+
+
+_llm_resp._extract_reasoning_content = _patched_extract_reasoning_content
+# ---------------------------------------------------------------------------
+
 from agents.market_data_agent import market_data_agent
 from agents.news_agent import news_analyst_agent
 from agents.fundamental_agent import fundamental_analyst_agent

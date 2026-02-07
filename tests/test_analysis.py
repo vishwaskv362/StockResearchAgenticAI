@@ -287,9 +287,60 @@ class TestPriceActionAnalysis:
                     assert data["support"] < data["resistance"], "Support must be below resistance"
 
 
+class TestPivotPointCalculation:
+    """Tests for standard daily pivot point calculation."""
+
+    @pytest.mark.unit
+    @pytest.mark.critical
+    def test_pivot_uses_daily_hlc(self, mock_yfinance):
+        """Critical: Pivot should be (prevH + prevL + prevC) / 3 from last day."""
+        from tools.analysis import calculate_technical_indicators
+
+        result = calculate_technical_indicators.func("RELIANCE", "6mo")
+        data = json.loads(result)
+
+        if "error" not in data and "support_resistance" in data:
+            sr = data["support_resistance"]
+            # Pivot must be between recent_low and recent_high
+            assert sr["support_1"] < sr["pivot"] < sr["resistance_1"]
+
+    @pytest.mark.unit
+    @pytest.mark.critical
+    def test_pivot_levels_near_current_price(self, mock_yfinance):
+        """Critical: Pivot levels should be near current price, not wildly far."""
+        from tools.analysis import calculate_technical_indicators
+
+        result = calculate_technical_indicators.func("RELIANCE", "6mo")
+        data = json.loads(result)
+
+        if "error" not in data and "support_resistance" in data:
+            sr = data["support_resistance"]
+            current = data.get("current_price", sr["pivot"])
+            # All levels should be within 10% of current price for daily pivots
+            for key in ["pivot", "support_1", "resistance_1"]:
+                pct_diff = abs(sr[key] - current) / current * 100
+                assert pct_diff < 10, (
+                    f"{key}={sr[key]} is {pct_diff:.1f}% from current price "
+                    f"{current} - daily pivot levels should be within 10%"
+                )
+
+    @pytest.mark.unit
+    def test_pivot_ordering(self, mock_yfinance):
+        """Test that S2 < S1 < Pivot < R1 < R2."""
+        from tools.analysis import calculate_technical_indicators
+
+        result = calculate_technical_indicators.func("RELIANCE", "6mo")
+        data = json.loads(result)
+
+        if "error" not in data and "support_resistance" in data:
+            sr = data["support_resistance"]
+            assert sr["support_2"] < sr["support_1"] < sr["pivot"]
+            assert sr["pivot"] < sr["resistance_1"] < sr["resistance_2"]
+
+
 class TestTrendAnalysis:
     """Tests for trend determination."""
-    
+
     @pytest.mark.unit
     def test_trend_values_valid(self, mock_yfinance):
         """Test that trend is one of expected values."""

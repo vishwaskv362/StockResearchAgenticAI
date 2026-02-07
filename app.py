@@ -1112,10 +1112,25 @@ def _generate_word_report(symbol: str, markdown_report: str, report_time: str) -
     import io
     import re
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+    # Clean code fences from LLM output
+    cleaned = _clean_report_markdown(markdown_report)
+
     doc = Document()
+
+    # Professional styling - set default font
+    style = doc.styles['Normal']
+    style.font.name = 'Calibri'
+    style.font.size = Pt(11)
+
+    # Set margins
+    for section in doc.sections:
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
 
     # Title
     title = doc.add_heading(f"Stock Research Report — {symbol}", level=0)
@@ -1130,34 +1145,56 @@ def _generate_word_report(symbol: str, markdown_report: str, report_time: str) -
 
     doc.add_paragraph("")  # spacer
 
+    # Table accumulation state machine
+    table_buffer = []
+
+    def flush_table():
+        if table_buffer:
+            _add_word_table(doc, list(table_buffer))
+            table_buffer.clear()
+
     # Parse markdown line-by-line
-    for line in markdown_report.split("\n"):
+    for line in cleaned.split("\n"):
         stripped = line.strip()
+
+        # Skip residual ``` lines
+        if stripped.startswith("```"):
+            continue
+
+        # Detect pipe-table lines
+        if stripped.startswith("|") and stripped.endswith("|"):
+            table_buffer.append(stripped)
+            continue
+        else:
+            flush_table()
 
         if not stripped:
             doc.add_paragraph("")
             continue
 
-        # Headings
+        # Headings - strip inline markdown from heading text
         if stripped.startswith("### "):
-            doc.add_heading(stripped[4:], level=3)
+            doc.add_heading(_strip_inline_md(stripped[4:]), level=3)
         elif stripped.startswith("## "):
-            doc.add_heading(stripped[3:], level=2)
+            doc.add_heading(_strip_inline_md(stripped[3:]), level=2)
         elif stripped.startswith("# "):
-            doc.add_heading(stripped[2:], level=1)
+            doc.add_heading(_strip_inline_md(stripped[2:]), level=1)
         elif stripped.startswith("---"):
-            doc.add_paragraph("_" * 50)
+            _add_horizontal_rule(doc)
         elif stripped.startswith("- ") or stripped.startswith("* "):
             text = stripped[2:]
             para = doc.add_paragraph(style="List Bullet")
-            _add_colored_run(para, text)
+            _add_formatted_runs(para, text)
         elif re.match(r"^\d+\.\s", stripped):
             text = re.sub(r"^\d+\.\s", "", stripped)
             para = doc.add_paragraph(style="List Number")
-            _add_colored_run(para, text)
+            _add_formatted_runs(para, text)
         else:
             para = doc.add_paragraph()
-            _add_colored_run(para, stripped)
+            _add_formatted_runs(para, stripped)
+
+    # Flush any remaining table lines
+    flush_table()
 
     # Disclaimer footer
     doc.add_paragraph("")
@@ -1175,22 +1212,362 @@ def _generate_word_report(symbol: str, markdown_report: str, report_time: str) -
     return buf.getvalue()
 
 
-def _add_colored_run(paragraph, text: str):
-    """Add text to a paragraph, coloring BUY/SELL keywords."""
+def _sanitize_for_pdf(text: str) -> str:
+    """Replace non-latin1 characters with ASCII equivalents for fpdf."""
+    replacements = {
+        '\u20b9': 'Rs.',   # ₹
+        '\u2014': '--',    # —
+        '\u2013': '-',     # –
+        '\u2018': "'",     # '
+        '\u2019': "'",     # '
+        '\u201c': '"',     # "
+        '\u201d': '"',     # "
+        '\u2022': '-',     # •
+        '\u2026': '...',   # …
+        '\u00d7': 'x',     # ×
+    }
+    for char, repl in replacements.items():
+        text = text.replace(char, repl)
+    # Fallback: drop any remaining non-latin1 characters
+    return text.encode('latin-1', errors='replace').decode('latin-1')
+
+
+def _generate_pdf_report(symbol: str, markdown_report: str, report_time: str) -> bytes:
+    """Convert a markdown report into a PDF and return bytes."""
+    import re
+    from fpdf import FPDF
+
+    cleaned = _sanitize_for_pdf(_clean_report_markdown(markdown_report))
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+
+    # Title
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(27, 42, 74)  # dark navy
+    pdf.cell(w=0, text=f"Stock Research Report -- {symbol}",
+             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(4)
+
+    # Timestamp
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(128, 128, 128)
+    pdf.cell(w=0, text=f"Generated: {report_time}",
+             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(8)
+
+    # Table accumulation
+    table_buffer: list[str] = []
+
+    def _pdf_row_height(col_widths, cells, line_h=5):
+        """Calculate the tallest cell height for a row with text wrapping."""
+        max_lines = 1
+        for i, text in enumerate(cells):
+            w = col_widths[i] - 2  # padding
+            text_w = pdf.get_string_width(text)
+            n_lines = max(1, int(text_w / w) + 1) if w > 0 else 1
+            if n_lines > max_lines:
+                max_lines = n_lines
+        return max_lines * line_h
+
+    def _pdf_draw_row(col_widths, cells, row_h, fill_color=None, is_header=False):
+        """Draw a single table row with multi_cell wrapping."""
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+
+        # Check if row fits on page, otherwise add new page
+        if y_start + row_h > pdf.h - pdf.b_margin:
+            pdf.add_page()
+            y_start = pdf.get_y()
+
+        if fill_color:
+            pdf.set_fill_color(*fill_color)
+
+        for i, text in enumerate(cells):
+            pdf.set_xy(x_start + sum(col_widths[:i]), y_start)
+            # Draw cell border + fill as a rect, then overlay text
+            pdf.rect(x_start + sum(col_widths[:i]), y_start,
+                     col_widths[i], row_h, style="DF" if fill_color else "D")
+            pdf.set_xy(x_start + sum(col_widths[:i]) + 1, y_start + 1)
+            pdf.multi_cell(w=col_widths[i] - 2, h=5,
+                           text=text, border=0, fill=False,
+                           align="C" if is_header else "L",
+                           new_x="RIGHT", new_y="TOP")
+
+        pdf.set_xy(x_start, y_start + row_h)
+
+    def flush_pdf_table():
+        if not table_buffer:
+            return
+        rows = []
+        for line in table_buffer:
+            stripped = line.strip().replace('|', '\t').replace('-', '').replace(':', '').strip()
+            if not stripped:
+                continue  # separator
+            cells = [c.strip() for c in line.strip().strip('|').split('|')]
+            rows.append(cells)
+
+        if not rows:
+            table_buffer.clear()
+            return
+
+        num_cols = len(rows[0])
+        page_width = pdf.w - pdf.l_margin - pdf.r_margin
+        col_widths = [page_width / num_cols] * num_cols
+
+        # Header row
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(255, 255, 255)
+        header_cells = [_strip_inline_md(c) for c in rows[0]]
+        h_height = _pdf_row_height(col_widths, header_cells)
+        _pdf_draw_row(col_widths, header_cells, h_height,
+                      fill_color=(27, 42, 74), is_header=True)
+
+        # Data rows
+        pdf.set_font("Helvetica", "", 9)
+        for r_idx, row in enumerate(rows[1:]):
+            data_cells = [_strip_inline_md(c) for c in row[:num_cols]]
+            r_height = _pdf_row_height(col_widths, data_cells)
+            fill = (242, 242, 242) if r_idx % 2 == 1 else (255, 255, 255)
+            pdf.set_text_color(0, 0, 0)
+            _pdf_draw_row(col_widths, data_cells, r_height, fill_color=fill)
+
+        pdf.ln(4)
+        table_buffer.clear()
+
+    for line in cleaned.split("\n"):
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            continue
+
+        # Table lines
+        if stripped.startswith("|") and stripped.endswith("|"):
+            table_buffer.append(stripped)
+            continue
+        else:
+            flush_pdf_table()
+
+        if not stripped:
+            pdf.ln(3)
+            continue
+
+        clean_text = _strip_inline_md(stripped)
+
+        if stripped.startswith("### "):
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.set_text_color(27, 42, 74)
+            pdf.cell(w=0, text=clean_text[4:] if clean_text.startswith("### ") else _strip_inline_md(stripped[4:]),
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+        elif stripped.startswith("## "):
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.set_text_color(27, 42, 74)
+            pdf.cell(w=0, text=_strip_inline_md(stripped[3:]),
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(3)
+        elif stripped.startswith("# "):
+            pdf.set_font("Helvetica", "B", 16)
+            pdf.set_text_color(27, 42, 74)
+            pdf.cell(w=0, text=_strip_inline_md(stripped[2:]),
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(4)
+        elif stripped.startswith("---"):
+            y = pdf.get_y()
+            pdf.set_draw_color(170, 170, 170)
+            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+            pdf.ln(4)
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(0, 0, 0)
+            bullet_text = _strip_inline_md(stripped[2:])
+            # Color BUY/SELL keywords
+            if "BUY" in bullet_text.upper():
+                pdf.set_text_color(0, 128, 0)
+            elif "SELL" in bullet_text.upper():
+                pdf.set_text_color(200, 0, 0)
+            pdf.cell(w=6, h=6, text="-")
+            pdf.multi_cell(w=0, h=6, text=f" {bullet_text}",
+                           new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+        elif re.match(r"^\d+\.\s", stripped):
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(0, 0, 0)
+            num_match = re.match(r"^(\d+\.)\s(.*)", stripped)
+            if num_match:
+                num_prefix = num_match.group(1)
+                body = _strip_inline_md(num_match.group(2))
+                pdf.cell(w=8, h=6, text=num_prefix)
+                pdf.multi_cell(w=0, h=6, text=f" {body}",
+                               new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(0, 0, 0)
+            text_out = _strip_inline_md(stripped)
+            if "BUY" in text_out.upper():
+                pdf.set_text_color(0, 128, 0)
+            elif "SELL" in text_out.upper():
+                pdf.set_text_color(200, 0, 0)
+            pdf.multi_cell(w=0, h=6, text=text_out,
+                           new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+
+    flush_pdf_table()
+
+    # Disclaimer
+    pdf.ln(8)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(128, 128, 128)
+    pdf.cell(w=0, text="DISCLAIMER: This report is for educational purposes only. Not financial advice.",
+             new_x="LMARGIN", new_y="NEXT", align="C")
+
+    return bytes(pdf.output())
+
+
+def _strip_inline_md(text: str) -> str:
+    """Strip inline markdown markers (bold/italic) for use in headings."""
+    import re
+    # Remove bold-italic (***), bold (**), italic (*)
+    text = re.sub(r'\*{3}(.+?)\*{3}', r'\1', text)
+    text = re.sub(r'\*{2}(.+?)\*{2}', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    return text
+
+
+def _add_formatted_runs(paragraph, text: str, base_font_size=None):
+    """Add text with inline markdown (bold/italic) and BUY/SELL coloring.
+
+    Parses ***bold-italic***, **bold**, *italic* into proper Word runs.
+    Also colors BUY/SELL keywords green/red.
+    """
     import re
     from docx.shared import RGBColor
 
-    # Split on BUY/SELL keywords, preserving delimiters
-    parts = re.split(r"(STRONG BUY|STRONG SELL|BUY|SELL)", text)
-    for part in parts:
-        run = paragraph.add_run(part)
-        upper = part.strip().upper()
+    # First split on BUY/SELL keywords
+    keyword_parts = re.split(r"(STRONG BUY|STRONG SELL|BUY|SELL)", text)
+
+    for kpart in keyword_parts:
+        upper = kpart.strip().upper()
         if upper in ("BUY", "STRONG BUY"):
+            run = paragraph.add_run(kpart)
             run.bold = True
             run.font.color.rgb = RGBColor(0, 128, 0)
-        elif upper in ("SELL", "STRONG SELL"):
+            if base_font_size:
+                run.font.size = base_font_size
+            continue
+        if upper in ("SELL", "STRONG SELL"):
+            run = paragraph.add_run(kpart)
             run.bold = True
             run.font.color.rgb = RGBColor(200, 0, 0)
+            if base_font_size:
+                run.font.size = base_font_size
+            continue
+
+        # Parse inline markdown: ***bold-italic***, **bold**, *italic*
+        tokens = re.split(
+            r'(\*{3}.+?\*{3}|\*{2}.+?\*{2}|\*[^*]+?\*)', kpart
+        )
+        for token in tokens:
+            if not token:
+                continue
+            if token.startswith('***') and token.endswith('***'):
+                run = paragraph.add_run(token[3:-3])
+                run.bold = True
+                run.italic = True
+            elif token.startswith('**') and token.endswith('**'):
+                run = paragraph.add_run(token[2:-2])
+                run.bold = True
+            elif token.startswith('*') and token.endswith('*') and len(token) > 2:
+                run = paragraph.add_run(token[1:-1])
+                run.italic = True
+            else:
+                run = paragraph.add_run(token)
+            if base_font_size:
+                run.font.size = base_font_size
+
+
+def _add_colored_run(paragraph, text: str):
+    """Add text to a paragraph, coloring BUY/SELL keywords."""
+    _add_formatted_runs(paragraph, text)
+
+
+def _set_cell_shading(cell, color_hex: str):
+    """Set background shading on a Word table cell via XML."""
+    from docx.oxml.ns import qn
+    from lxml import etree
+
+    shading = etree.SubElement(cell._tc.get_or_add_tcPr(), qn('w:shd'))
+    shading.set(qn('w:fill'), color_hex)
+    shading.set(qn('w:val'), 'clear')
+
+
+def _add_word_table(doc, table_lines: list):
+    """Convert markdown pipe-table lines into a proper Word table.
+
+    Expects lines like: | Header1 | Header2 | ... |
+    Second line is separator (|---|---|) and is skipped.
+    """
+    from docx.shared import Pt, RGBColor
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    if len(table_lines) < 2:
+        return
+
+    def parse_row(line):
+        cells = [c.strip() for c in line.strip().strip('|').split('|')]
+        return cells
+
+    header_cells = parse_row(table_lines[0])
+    num_cols = len(header_cells)
+
+    # Collect data rows, skipping separator line (|---|---|)
+    data_rows = []
+    for line in table_lines[1:]:
+        stripped = line.strip().replace('|', '').replace('-', '').replace(':', '').strip()
+        if not stripped:
+            continue  # separator line
+        data_rows.append(parse_row(line))
+
+    table = doc.add_table(rows=1 + len(data_rows), cols=num_cols)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = 'Table Grid'
+
+    # Header row
+    for i, text in enumerate(header_cells):
+        cell = table.rows[0].cells[i]
+        cell.text = ''
+        run = cell.paragraphs[0].add_run(_strip_inline_md(text))
+        run.bold = True
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(255, 255, 255)
+        _set_cell_shading(cell, '1B2A4A')
+
+    # Data rows with alternating shading
+    for row_idx, row_data in enumerate(data_rows):
+        for col_idx, text in enumerate(row_data[:num_cols]):
+            cell = table.rows[1 + row_idx].cells[col_idx]
+            cell.text = ''
+            _add_formatted_runs(cell.paragraphs[0], _strip_inline_md(text), base_font_size=Pt(10))
+            if row_idx % 2 == 1:
+                _set_cell_shading(cell, 'F2F2F2')
+
+    doc.add_paragraph('')  # spacer after table
+
+
+def _add_horizontal_rule(doc):
+    """Add a horizontal rule as a paragraph with a bottom border."""
+    from docx.oxml.ns import qn
+    from lxml import etree
+
+    para = doc.add_paragraph()
+    pPr = para._p.get_or_add_pPr()
+    pBdr = etree.SubElement(pPr, qn('w:pBdr'))
+    bottom = etree.SubElement(pBdr, qn('w:bottom'))
+    bottom.set(qn('w:val'), 'single')
+    bottom.set(qn('w:sz'), '6')
+    bottom.set(qn('w:space'), '1')
+    bottom.set(qn('w:color'), 'AAAAAA')
 
 
 def render_ai_analysis(symbol: str):
@@ -1252,11 +1629,12 @@ def render_ai_analysis(symbol: str):
         col1, col2 = st.columns(2)
 
         with col1:
+            pdf_bytes = _generate_pdf_report(symbol, report, report_time)
             st.download_button(
-                label="📄 Download as Markdown",
-                data=report,
-                file_name=f"{symbol}_research_report_{report_time}.md",
-                mime="text/markdown",
+                label="📄 Download as PDF",
+                data=pdf_bytes,
+                file_name=f"{symbol}_research_report_{report_time}.pdf",
+                mime="application/pdf",
                 use_container_width=True,
             )
 

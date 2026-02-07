@@ -557,7 +557,7 @@ class TestGenerateWordReport:
 
     @pytest.mark.unit
     def test_horizontal_rule_converted(self):
-        """Test that --- becomes an underline separator."""
+        """Test that --- becomes an XML border element, not underscores."""
         from docx import Document
         import io
         from app import _generate_word_report
@@ -566,8 +566,17 @@ class TestGenerateWordReport:
         result = _generate_word_report("TEST", md, "2026-02-07")
 
         doc = Document(io.BytesIO(result))
+        # Should NOT contain the old underscore approach
         all_text = [p.text for p in doc.paragraphs]
-        assert "_" * 50 in all_text
+        assert "_" * 50 not in all_text
+        # Should contain XML border element in at least one paragraph
+        found_border = False
+        for p in doc.paragraphs:
+            xml = p._p.xml
+            if 'w:pBdr' in xml and 'w:bottom' in xml:
+                found_border = True
+                break
+        assert found_border, "Expected XML paragraph border for horizontal rule"
 
     @pytest.mark.unit
     def test_empty_report(self):
@@ -577,6 +586,162 @@ class TestGenerateWordReport:
         result = _generate_word_report("EMPTY", "", "2026-02-07")
         assert isinstance(result, bytes)
         assert len(result) > 0
+
+    @pytest.mark.unit
+    def test_code_fences_stripped(self):
+        """Test that code fences are not present in the output."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "```markdown\n# Title\nSome text\n```\n"
+        result = _generate_word_report("TEST", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        all_text = " ".join(p.text for p in doc.paragraphs)
+        assert "```" not in all_text
+
+    @pytest.mark.unit
+    def test_bold_markdown_parsed(self):
+        """Test that **bold** markdown becomes a bold run in the document."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "This has **important** text.\n"
+        result = _generate_word_report("TEST", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        # Find a paragraph containing "important"
+        for p in doc.paragraphs:
+            for run in p.runs:
+                if run.text == "important":
+                    assert run.bold is True, "Expected 'important' to be bold"
+                    return
+        pytest.fail("Did not find a run with text 'important'")
+
+    @pytest.mark.unit
+    def test_italic_markdown_parsed(self):
+        """Test that *italic* markdown becomes an italic run in the document."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "This has *emphasis* here.\n"
+        result = _generate_word_report("TEST", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        for p in doc.paragraphs:
+            for run in p.runs:
+                if run.text == "emphasis":
+                    assert run.italic is True, "Expected 'emphasis' to be italic"
+                    return
+        pytest.fail("Did not find a run with text 'emphasis'")
+
+    @pytest.mark.unit
+    def test_pipe_table_becomes_word_table(self):
+        """Test that markdown pipe tables become Word tables with correct cells."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "| Metric | Value |\n|---|---|\n| PE Ratio | 25.3 |\n| ROE | 18.5% |\n"
+        result = _generate_word_report("TEST", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        assert len(doc.tables) >= 1, "Expected at least one Word table"
+        table = doc.tables[0]
+        # Header row
+        assert table.rows[0].cells[0].text.strip() == "Metric"
+        assert table.rows[0].cells[1].text.strip() == "Value"
+        # Data rows
+        assert table.rows[1].cells[0].text.strip() == "PE Ratio"
+        assert table.rows[1].cells[1].text.strip() == "25.3"
+        assert table.rows[2].cells[0].text.strip() == "ROE"
+        assert table.rows[2].cells[1].text.strip() == "18.5%"
+
+    @pytest.mark.unit
+    def test_table_header_has_shading(self):
+        """Test that table header cells have dark background shading."""
+        from docx import Document
+        import io
+        from app import _generate_word_report
+
+        md = "| Name | Score |\n|---|---|\n| Alpha | 90 |\n"
+        result = _generate_word_report("TEST", md, "2026-02-07")
+
+        doc = Document(io.BytesIO(result))
+        assert len(doc.tables) >= 1
+        header_cell = doc.tables[0].rows[0].cells[0]
+        xml = header_cell._tc.xml
+        assert 'w:shd' in xml, "Expected shading element in header cell"
+        assert '1B2A4A' in xml, "Expected dark navy shading color"
+
+
+class TestGeneratePDFReport:
+    """Tests for PDF report generation."""
+
+    @pytest.mark.unit
+    def test_returns_bytes(self):
+        """Test that PDF report returns non-empty bytes."""
+        from app import _generate_pdf_report
+
+        md = "# Title\n\nSome text.\n\n- Bullet one\n- Bullet two\n"
+        result = _generate_pdf_report("RELIANCE", md, "2026-02-07_10-30")
+
+        assert isinstance(result, bytes)
+        assert len(result) > 0
+
+    @pytest.mark.unit
+    def test_output_is_valid_pdf(self):
+        """Test that output starts with PDF header."""
+        from app import _generate_pdf_report
+
+        md = "# Report\n\n## Section\n\nHello world\n"
+        result = _generate_pdf_report("TCS", md, "2026-02-07_12-00")
+
+        assert result[:5] == b"%PDF-"
+
+    @pytest.mark.unit
+    def test_code_fences_stripped(self):
+        """Test that code fences are not in PDF output."""
+        from app import _generate_pdf_report
+
+        md = "```markdown\n# Title\nSome text\n```\n"
+        result = _generate_pdf_report("TEST", md, "2026-02-07")
+
+        assert b"```" not in result
+
+    @pytest.mark.unit
+    def test_handles_unicode(self):
+        """Test that Unicode characters like Rs. symbol are handled."""
+        from app import _generate_pdf_report
+
+        md = "Price: \u20b9224.46\nChange: \u201310%\n"
+        result = _generate_pdf_report("TEST", md, "2026-02-07")
+
+        assert isinstance(result, bytes)
+        assert result[:5] == b"%PDF-"
+
+    @pytest.mark.unit
+    def test_pipe_table_in_pdf(self):
+        """Test that pipe tables are rendered in PDF."""
+        from app import _generate_pdf_report
+
+        md = "| Metric | Value |\n|---|---|\n| PE | 25.3 |\n"
+        result = _generate_pdf_report("TEST", md, "2026-02-07")
+
+        assert isinstance(result, bytes)
+        assert len(result) > 500  # Should have table content
+
+    @pytest.mark.unit
+    def test_empty_report(self):
+        """Test that empty markdown generates a valid PDF."""
+        from app import _generate_pdf_report
+
+        result = _generate_pdf_report("EMPTY", "", "2026-02-07")
+        assert isinstance(result, bytes)
+        assert result[:5] == b"%PDF-"
 
 
 class TestAddColoredRun:

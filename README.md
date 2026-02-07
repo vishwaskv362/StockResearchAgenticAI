@@ -45,6 +45,12 @@ uv run python run_analysis.py RELIANCE --quick
   - 🎯 Investment Strategist
   - 📝 Report Writer
 
+### 🖥 Web Dashboard (Streamlit)
+- Interactive stock analysis across 5 tabs (Technical, Fundamentals, News, Institutional, AI Analysis)
+- AI research reports downloadable as **PDF** or **Word (.docx)**
+- Real-time charts with multiple timeframes
+- Market overview with top gainers/losers
+
 ### 📱 Telegram Bot Interface
 - Instant price checks
 - Full AI-powered research reports
@@ -69,7 +75,7 @@ uv run python run_analysis.py RELIANCE --quick
 ### 💹 Technical Analysis
 - Moving Averages (SMA, EMA)
 - RSI, MACD, Bollinger Bands
-- Support/Resistance levels
+- Standard daily pivot points (S1/S2, R1/R2)
 - Trend identification
 - Trading signals
 

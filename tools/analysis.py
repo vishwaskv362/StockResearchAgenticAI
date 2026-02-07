@@ -109,15 +109,21 @@ def calculate_technical_indicators(symbol: str, period: str = "6mo") -> str:
         roc_20 = ((current_price - close.iloc[-21]) / close.iloc[-21]) * 100 if len(close) > 20 else 0
         
         # ==========================================
-        # Support & Resistance Levels
+        # Support & Resistance Levels (Standard Daily Pivots)
         # ==========================================
+        # Use previous day's H/L/C for standard pivot points
+        prev_high = high.iloc[-1]
+        prev_low = low.iloc[-1]
+        prev_close = close.iloc[-1]
+        pivot = (prev_high + prev_low + prev_close) / 3
+        r1 = 2 * pivot - prev_low
+        s1 = 2 * pivot - prev_high
+        r2 = pivot + (prev_high - prev_low)
+        s2 = pivot - (prev_high - prev_low)
+
+        # 20-day context levels (not pivot-derived)
         recent_high = high.tail(20).max()
         recent_low = low.tail(20).min()
-        pivot = (recent_high + recent_low + current_price) / 3
-        r1 = 2 * pivot - recent_low
-        s1 = 2 * pivot - recent_high
-        r2 = pivot + (recent_high - recent_low)
-        s2 = pivot - (recent_high - recent_low)
         
         # ==========================================
         # Trend Analysis
